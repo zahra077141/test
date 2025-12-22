@@ -1,54 +1,105 @@
-from flask import Flask, render_template, request, redirect, url_for
+import asyncio
+import shlex
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Initialize the Flask application
-app = Flask(__name__)
+TOKEN = '8412698993:AAFPNA35Kyy-kBNyMHKnID_Oa9mtspqNepE'  # استبدل بتوكنك
+AUTHORIZED_USERS = {7367423827}  # معرفك
 
-# In-memory database (a simple list of dictionaries)
-submissions = []
+class ShellSession:
+    def __init__(self):
+        self.cwd = None
+        self.process = None
 
-# Load existing submissions from the file on startup
-try:
-    with open("submissions.txt", "r") as f:
-        for line in f:
-            name, email = line.strip().split(",", 1)
-            submissions.append({'name': name, 'email': email})
-except FileNotFoundError:
-    # If the file doesn't exist yet, start with an empty list
-    pass
+    async def start_shell(self):
+        # شيل نظيف بدون تحميل ملفات تعريف، مع prompt بسيط
+        self.process = await asyncio.create_subprocess_shell(
+            '/bin/bash --noprofile --norc',
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        # نحدد prompt بسيط لمنع أي تعقيدات
+        await self.send_command('PS1="$ "\n')
+        self.cwd = await self.get_cwd()
 
-@app.route('/')
-def index():
-    """
-    Renders the main page with the submission form.
-    """
-    return render_template('index.html')
+    async def send_command(self, cmd):
+        self.process.stdin.write(cmd.encode())
+        await self.process.stdin.drain()
 
-@app.route('/submit', methods=['POST'])
-def submit():
-    """
-    Handles the form submission.
-    Stores the name and email in the in-memory database and updates the file.
-    """
-    name = request.form.get('name')
-    email = request.form.get('email')
-    if name and email:
-        # Add to in-memory list
-        submissions.append({'name': name, 'email': email})
-        # Append to the submissions.txt file
-        with open("submissions.txt", "a") as f:
-            f.write(f"{name},{email}\n")
-    return redirect(url_for('entries'))
+    async def get_cwd(self):
+        await self.send_command('pwd\n')
+        await asyncio.sleep(0.1)
+        output = await self.read_output(timeout=0.2)
+        if output:
+            lines = output.strip().split('\n')
+            return lines[-1]
+        return None
 
-@app.route('/entries')
-def entries():
-    """
-    Displays all submitted entries in a table.
-    """
-    return render_template('entries.html', entries=submissions)
+    async def read_output(self, timeout=0.5):
+        output = b''
+        try:
+            while True:
+                line = await asyncio.wait_for(self.process.stdout.readline(), timeout=timeout)
+                if not line:
+                    break
+                output += line
+        except asyncio.TimeoutError:
+            pass
+        return output.decode(errors='ignore')
+
+    async def run_command(self, command):
+        if command.startswith('cd'):
+            parts = shlex.split(command)
+            if len(parts) == 1:
+                command = 'cd ~'
+            # نفذ cd بدون انتظار المخرجات الكثيرة
+            await self.send_command(command + '\n')
+            await asyncio.sleep(0.1)
+            self.cwd = await self.get_cwd()
+            return f'تم تغيير المسار إلى:\n`{self.cwd}`'
+
+        await self.send_command(command + '\n')
+        await asyncio.sleep(0.3)
+        output = await self.read_output(timeout=1)
+
+        if not output.strip():
+            output = "(لا يوجد مخرجات)"
+
+        return output
+
+shell_session = ShellSession()
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in AUTHORIZED_USERS:
+        await update.message.reply_text("ما عندك صلاحية لاستخدام هذا البوت.")
+        return
+    await shell_session.start_shell()
+    await update.message.reply_text("بوت جاهز، أرسل أي أمر.")
+
+async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in AUTHORIZED_USERS:
+        await update.message.reply_text("ما عندك صلاحية لاستخدام هذا البوت.")
+        return
+
+    command = update.message.text.strip()
+    if not command:
+        await update.message.reply_text("يرجى ارسال أمر صالح.")
+        return
+
+    result = await shell_session.run_command(command)
+
+    # رد مرتب: المسار بأعلى، ثم الناتج
+    response = f"`{shell_session.cwd} $ {command}`\n\n"
+    response += f"```\n{result.strip()}\n```"
+
+    await update.message.reply_text(response, parse_mode='Markdown')
+
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), run_command))
+    app.run_polling()
 
 if __name__ == '__main__':
-    # To run this application:
-    # 1. Make sure you have Flask installed: pip install Flask
-    # 2. Run this script: python main.py
-    # 3. Open your web browser and go to: http://127.0.0.1:5000
-    app.run(debug=True)
+    main()
