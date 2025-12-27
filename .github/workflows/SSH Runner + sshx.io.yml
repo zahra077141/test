@@ -1,0 +1,75 @@
+name: SSH Runner + sshx.io
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup-sshx-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355  # 5 hours
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      # --- تثبيت Node.js ---
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # --- تثبيت المكتبات الأساسية ---
+      - name: Install npm packages
+        run: |
+          echo ">>> Installing essential npm packages..."
+          npm install -g axios node-fetch undici got superagent
+          npm install -g express fastify
+          npm install -g ws socket.io-client
+          npm install -g dotenv
+          echo "✓ npm packages installed successfully"
+
+      # --- تثبيت أدوات إضافية ---
+      - name: Install additional tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl wget git vim nano htop
+          echo "✓ Additional tools installed"
+
+      # --- تثبيت وتشغيل sshx.io ---
+      - name: Install and start sshx.io
+        run: |
+          echo ">>> Installing sshx.io..."
+          curl -sSf https://sshx.io/get | sh
+          
+          echo ">>> Starting sshx.io session..."
+          # تشغيل sshx في الخلفية وحفظ الرابط
+          sshx > sshx_output.txt 2>&1 &
+          SSHX_PID=$!
+          
+          # الانتظار حتى يتم إنشاء الرابط
+          echo ">>> Waiting for sshx.io link..."
+          sleep 10
+          
+          # عرض معلومات الاتصال
+          echo ""
+          echo "=========================================="
+          echo "   sshx.io SESSION READY"
+          echo "=========================================="
+          cat sshx_output.txt
+          echo "=========================================="
+          echo ""
+          echo ">>> Node.js version: $(node --version)"
+          echo ">>> npm version: $(npm --version)"
+          echo ""
+          echo ">>> Installed global packages:"
+          npm list -g --depth=0
+          echo ""
+          echo "=========================================="
+          echo ">>> Session will stay alive for 5 hours..."
+          echo "=========================================="
+          
+          # إبقاء الجلسة نشطة
+          tail -f sshx_output.txt &
+          sleep 18000
