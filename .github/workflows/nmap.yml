@@ -1,0 +1,51 @@
+name: website nmap
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup-sshx-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355  # 5 hours
+    env:
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+      SSHX_TOKEN: ${{ secrets.SSHX_TOKEN }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Python packages
+        run: |
+          pip install flask pyrogram flask-socketio eventlet tgcrypto telethon python-telegram-bot aiogram pyTelegramBotAPI requests aiohttp python-dotenv rich Pillow uvloop orjson ujson pydantic sqlalchemy aiosqlite motor pymongo cryptography pyjwt httpx loguru colorama pyyaml lxml beautifulsoup4 fastapi tqdm
+
+      - name: Install nmap
+        run: |
+          sudo apt install nmap
+
+      - name: Download file to /mnt
+        run: |
+          sudo wget -O /mnt/main.py "https://raw.githubusercontent.com/tamata2000/install-files-/refs/heads/main/app.py"
+
+      # --- Start api (Modified to run in background) ---
+      - name: Start api
+        run: |
+          # تشغيل السيرفر في الخلفية باستخدام nohup و &
+          nohup python3 /mnt/main.py > /dev/null 2>&1 &
+          # انتظار 5 ثواني لضمان عمل السيرفر قبل الخطوة التالية
+          sleep 5
+
+      # --- Start code (Tunnel & Keep Alive) ---
+      - name: Start python code
+        run: |
+          # تشغيل SSH في الخلفية مع تجاوز فحص البصمة
+          ssh -o StrictHostKeyChecking=no -R myapp12345api:80:localhost:8080 serveo.net &
+          
+          echo ">>> Tunnel started. Keeping session alive for 6 hours..."
+          # أمر النوم لإبقاء الجلسة مفتوحة
+          sleep 21000
