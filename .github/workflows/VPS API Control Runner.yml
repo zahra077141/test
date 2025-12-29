@@ -1,0 +1,110 @@
+name: VPS API Control Runner
+on:
+  workflow_dispatch:
+
+jobs:
+  api-service:
+    runs-on: ubuntu-latest
+    # تحديد مدة التشغيل القصوى بـ 6 ساعات (حدود GitHub Actions)
+    timeout-minutes: 360 
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install flask flask-socketio eventlet psutil
+
+      - name: Create API Script
+        run: |
+          cat << 'EOF' > api_server.py
+          import os, subprocess, threading, time, platform, shutil
+          from flask import Flask, request, jsonify
+          from flask_socketio import SocketIO, emit
+
+          app = Flask(__name__)
+          app.config["SECRET_KEY"] = "vps_api_secret"
+          # إعداد SocketIO ليعمل مع eventlet لضمان الأداء العالي
+          socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+          running_commands = {}
+
+          def format_size(bytes):
+              for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                  if bytes < 1024.0: return f"{bytes:.1f} {unit}"
+                  bytes /= 1024.0
+
+          @app.route("/api/files", methods=["POST"])
+          def list_files():
+              data = request.get_json() or {}
+              path = data.get("path", "/")
+              try:
+                  if not os.path.exists(path):
+                      return jsonify({"success": False, "error": "المسار غير موجود"})
+                  items = []
+                  for item in os.listdir(path):
+                      ipath = os.path.join(path, item)
+                      try:
+                          stat = os.stat(ipath)
+                          items.append({
+                              "name": item, "path": ipath,
+                              "is_dir": os.path.isdir(ipath),
+                              "size": "DIR" if os.path.isdir(ipath) else format_size(stat.st_size)
+                          })
+                      except: continue
+                  return jsonify({"success": True, "files": items})
+              except Exception as e:
+                  return jsonify({"success": False, "error": str(e)})
+
+          @app.route("/api/sysinfo", methods=["GET"])
+          def sys_info():
+              return jsonify({
+                  "os": platform.system(),
+                  "release": platform.release(),
+                  "cpu": os.cpu_count(),
+                  "time": time.ctime(),
+                  "status": "online"
+              })
+
+          @socketio.on('run_cmd')
+          def handle_cmd(data):
+              cmd = data.get('cmd')
+              sid = request.sid
+              def execute():
+                  proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                  running_commands[sid] = proc
+                  for line in iter(proc.stdout.readline, ''):
+                      socketio.emit('output', {'line': line}, room=sid)
+                  proc.wait()
+                  socketio.emit('output', {'line': f"\n[Process Finished: {proc.returncode}]\n"}, room=sid)
+              threading.Thread(target=execute).start()
+
+          if __name__ == "__main__":
+              # تشغيل السيرفر على البورت 8080
+              socketio.run(app, host="0.0.0.0", port=8080)
+          EOF
+
+      - name: Start API Server
+        run: |
+          # تشغيل السيرفر في الخلفية وتوجيه السجلات لملف log
+          nohup python3 api_server.py > server.log 2>&1 &
+          sleep 5
+          echo ">>> Server Log Check:"
+          cat server.log
+
+      - name: Open Tunnel and Keep Alive
+        run: |
+          echo ">>> Starting Tunnel via Serveo..."
+          echo ">>> Your URL will be: https://j8928f923d29jd1k.serveo.net"
+          
+          # خيارات SSH لضمان بقاء الاتصال حياً ومنع انقطاعه
+          # ServerAliveInterval لإرسال إشارة بقاء كل 60 ثانية
+          ssh -o StrictHostKeyChecking=no \
+              -o ServerAliveInterval=60 \
+              -o ServerAliveCountMax=3 \
+              -R j8928f923d29jd1k:80:localhost:8080 serveo.net
