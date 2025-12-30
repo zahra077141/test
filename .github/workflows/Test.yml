@@ -1,4 +1,4 @@
-name: RustDesk + Win10
+name: RustDesk + Win10 (Pinggy)
 
 on:
   workflow_dispatch:
@@ -7,21 +7,6 @@ jobs:
   run-rustdesk:
     runs-on: windows-2022
     steps:
-      - name: Install Node.js & Localtunnel
-        shell: powershell
-        run: |
-          # طھط«ط¨ظٹطھ Node.js
-          $nodeUrl = "https://nodejs.org/dist/v20.11.0/node-v20.11.0-x64.msi"
-          $installerPath = "$env:TEMP\nodejs.msi"
-          Invoke-WebRequest -Uri $nodeUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          
-          # طھط­ط¯ظٹط« PATH
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          
-          # طھط«ط¨ظٹطھ Localtunnel
-          & "C:\Program Files\nodejs\npm.cmd" install -g localtunnel
-
       - name: Install RustDesk
         shell: powershell
         run: |
@@ -30,6 +15,7 @@ jobs:
           Invoke-WebRequest -Uri $rdUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           
+          Start-Sleep -Seconds 3
           & "C:\Program Files\RustDesk\rustdesk.exe" --password "MR.English2008"
           
           Start-Sleep -Seconds 5
@@ -44,39 +30,45 @@ jobs:
           netsh advfirewall firewall add rule name="RustDesk-TCP" dir=in action=allow protocol=TCP localport=21115-21119
           netsh advfirewall firewall add rule name="RustDesk-UDP" dir=in action=allow protocol=UDP localport=21116
 
-      - name: Start Localtunnel
+      - name: Start Pinggy TCP Tunnel
         shell: powershell
         run: |
-          # طھط´ط؛ظٹظ„ Localtunnel ظپظٹ ط§ظ„ط®ظ„ظپظٹط©
-          $ltPath = "C:\Program Files\nodejs\node_modules\localtunnel\bin\lt.js"
-          Start-Process node -ArgumentList "`"$ltPath`"", "--port", "21116" -RedirectStandardOutput "$env:TEMP\lt.log" -NoNewWindow
+          # تشغيل Pinggy tunnel في الخلفية
+          $pinggyProcess = Start-Process ssh -ArgumentList "-p", "443", "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-R", "0:localhost:21116", "tcp@a.pinggy.io" -PassThru -NoNewWindow -RedirectStandardOutput "$env:TEMP\pinggy.log" -RedirectStandardError "$env:TEMP\pinggy_err.log"
           
-          Start-Sleep -Seconds 10
+          Start-Sleep -Seconds 15
           
-          # ظ‚ط±ط§ط،ط© ط§ظ„ط±ط§ط¨ط· ظ…ظ† ط§ظ„ظ€ log
-          $ltLog = Get-Content "$env:TEMP\lt.log" -Raw
-          if ($ltLog -match "https://[a-z0-9\-]+\.loca\.lt") {
-              $publicUrl = $matches[0]
-              "LT_URL=$publicUrl" | Out-File -Append $env:GITHUB_ENV
+          # قراءة الرابط من الـ log
+          $pinggyLog = Get-Content "$env:TEMP\pinggy.log" -Raw -ErrorAction SilentlyContinue
+          if ($pinggyLog -match "tcp://([a-z0-9\-]+\.a\.pinggy\.io):(\d+)") {
+              $publicUrl = $matches[1]
+              $publicPort = $matches[2]
+              "PINGGY_URL=$publicUrl" | Out-File -Append $env:GITHUB_ENV
+              "PINGGY_PORT=$publicPort" | Out-File -Append $env:GITHUB_ENV
           }
 
       - name: Runner Status & Keep Alive
         shell: powershell
         run: |
           $endTime = (Get-Date).AddHours(6)
-          Write-Host "Thanks to MR.English2008 for this perfect work"
-          Write-Host "follow for more: https://t.me/ME2008_RDP"
-          Write-Host "================================"
+          Write-Host "========================================="
+          Write-Host "Thanks to MR.English2008 for this work"
+          Write-Host "Telegram: https://t.me/ME2008_RDP"
+          Write-Host "========================================="
+          Write-Host ""
           Write-Host "CONNECTION DETAILS:"
           Write-Host "RustDesk ID: $env:RUSTDESK_ID"
-          Write-Host "Public URL: $env:LT_URL"
+          Write-Host "Pinggy URL: $env:PINGGY_URL"
+          Write-Host "Pinggy Port: $env:PINGGY_PORT"
           Write-Host "Password: MR.English2008"
-          Write-Host "================================"
           Write-Host ""
-          Write-Host "Note: Localtunnel is 100% FREE - No registration required!"
-          Write-Host "Your tunnel will remain active for 6 hours"
+          Write-Host "========================================="
+          Write-Host "Pinggy is 100% FREE - No registration!"
+          Write-Host "Active for 6 hours"
+          Write-Host "========================================="
+          Write-Host ""
 
           while ((Get-Date) -lt $endTime) {
-              Write-Host "Status: Online | ID: $env:RUSTDESK_ID | URL: $env:LT_URL | $(Get-Date)"
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Status: Online | ID: $env:RUSTDESK_ID | URL: $env:PINGGY_URL:$env:PINGGY_PORT"
               Start-Sleep -Seconds 60
           }
