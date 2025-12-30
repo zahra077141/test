@@ -110,6 +110,8 @@ jobs:
               Write-Host "SSH tunnel running"
           }
           
+          $rdpAddress = "${serveoHost}:${serveoPort}"
+          
           $connectionInfo = @"
           ============================================
                 RDP CONNECTION via SERVEO TCP
@@ -124,7 +126,7 @@ jobs:
           
           HOW TO CONNECT:
           1. Open Remote Desktop Connection
-          2. Computer: $serveoHost:$serveoPort
+          2. Computer: $rdpAddress
           3. Username: rdpuser
           4. Password: RDP@2024Secure!
           5. Click Connect
