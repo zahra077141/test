@@ -1,281 +1,82 @@
-name: Avica RDP via SSH Tunnel
+name: RustDesk + Win10
 
 on:
   workflow_dispatch:
 
 jobs:
-  run-rdp:
+  run-rustdesk:
     runs-on: windows-2022
-
     steps:
-      - name: Enable RDP Access
-        run: |
-          Write-Host "Enabling RDP..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
-          Write-Host "RDP Enabled Successfully"
-
-      - name: Create RDP User
-        run: |
-          Write-Host "Creating RDP User..."
-          $Password = ConvertTo-SecureString "RDP@2024Secure!" -AsPlainText -Force
-          try {
-              New-LocalUser -Name "rdpuser" -Password $Password -PasswordNeverExpires -AccountNeverExpires -ErrorAction SilentlyContinue
-          } catch {
-              Write-Host "User might already exist, continuing..."
-          }
-          Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "rdpuser" -ErrorAction SilentlyContinue
-          Write-Host "User Created: rdpuser"
-
-      - name: Install OpenSSH
-        run: |
-          Write-Host "Downloading OpenSSH..."
-          $maxRetries = 3
-          $retryCount = 0
-          $downloaded = $false
-          
-          while (-not $downloaded -and $retryCount -lt $maxRetries) {
-              try {
-                  curl.exe -s -L -o C:\openssh.zip https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.5.0.0p1-Beta/OpenSSH-Win64.zip
-                  if (Test-Path "C:\openssh.zip") {
-                      $downloaded = $true
-                      Write-Host "OpenSSH downloaded"
-                  }
-              } catch {
-                  $retryCount++
-                  Write-Host "Retry $retryCount of $maxRetries..."
-                  Start-Sleep -Seconds 3
-              }
-          }
-          
-          if (-not $downloaded) {
-              Write-Host "Trying alternative method..."
-              Invoke-WebRequest -Uri "https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.5.0.0p1-Beta/OpenSSH-Win64.zip" -OutFile "C:\openssh.zip"
-          }
-          
-          Write-Host "Extracting OpenSSH..."
-          Expand-Archive -Path C:\openssh.zip -DestinationPath C:\ -Force
-          
-          if (Test-Path "C:\OpenSSH-Win64\ssh.exe") {
-              Write-Host "OpenSSH ready"
-          } else {
-              Write-Host "ERROR: SSH not found!"
-              exit 1
-          }
-
-      - name: Download Bore Tunnel Client
-        run: |
-          Write-Host "Downloading Bore tunnel client..."
-          try {
-              curl.exe -s -L -o C:\bore.exe https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.exe
-              if (Test-Path "C:\bore.exe") {
-                  Write-Host "Bore downloaded successfully"
-              }
-          } catch {
-              Write-Host "Failed to download Bore"
-          }
-
-      - name: Create Localhost.run Tunnel
-        run: |
-          Write-Host "Creating localhost.run tunnel for RDP..."
-          
-          New-Item -Path "C:\tunnel.log" -ItemType File -Force | Out-Null
-          
-          $sshProcess = Start-Process -FilePath "C:\OpenSSH-Win64\ssh.exe" -ArgumentList "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-o", "ExitOnForwardFailure=yes", "-R", "80:localhost:3389", "nokey@localhost.run" -NoNewWindow -PassThru -RedirectStandardOutput "C:\tunnel.log" -RedirectStandardError "C:\tunnel_error.log"
-          
-          Write-Host "Waiting for localhost.run tunnel..."
-          Start-Sleep -Seconds 15
-          
-          $tunnelUrl = ""
-          $tunnelHost = ""
-          $tunnelPort = ""
-          
-          if (Test-Path "C:\tunnel.log") {
-              $logContent = Get-Content "C:\tunnel.log" -Raw
-              Write-Host "Tunnel Output:"
-              Write-Host $logContent
-              
-              if ($logContent -match "([a-z0-9\-]+\.lhr\.life):(\d+)") {
-                  $tunnelHost = $matches[1]
-                  $tunnelPort = $matches[2]
-                  $tunnelUrl = "${tunnelHost}:${tunnelPort}"
-                  Write-Host "Tunnel established successfully"
-              } elseif ($logContent -match "([a-z0-9\-]+\.localhost\.run)") {
-                  $tunnelHost = $matches[1]
-                  $tunnelUrl = $tunnelHost
-                  Write-Host "HTTP tunnel established"
-              }
-          }
-          
-          if (Test-Path "C:\tunnel_error.log") {
-              $errorContent = Get-Content "C:\tunnel_error.log" -Raw
-              if ($errorContent) {
-                  Write-Host "Tunnel messages:"
-                  Write-Host $errorContent
-              }
-          }
-          
-          if (-not $sshProcess.HasExited) {
-              Write-Host "SSH tunnel process running"
-              echo "TUNNEL_HOST=$tunnelHost" >> $env:GITHUB_ENV
-              echo "TUNNEL_PORT=$tunnelPort" >> $env:GITHUB_ENV
-              echo "TUNNEL_URL=$tunnelUrl" >> $env:GITHUB_ENV
-          } else {
-              Write-Host "SSH process exited, trying Bore tunnel..."
-          }
-
-      - name: Create Bore Tunnel as Backup
-        run: |
-          Write-Host "Starting Bore tunnel as backup..."
-          
-          if (Test-Path "C:\bore.exe") {
-              $boreProcess = Start-Process -FilePath "C:\bore.exe" -ArgumentList "local", "3389", "--to", "bore.pub" -NoNewWindow -PassThru -RedirectStandardOutput "C:\bore.log" -RedirectStandardError "C:\bore_error.log"
-              
-              Start-Sleep -Seconds 10
-              
-              if (Test-Path "C:\bore.log") {
-                  $boreLog = Get-Content "C:\bore.log" -Raw
-                  Write-Host "Bore Output:"
-                  Write-Host $boreLog
-                  
-                  if ($boreLog -match "listening at bore\.pub:(\d+)") {
-                      $borePort = $matches[1]
-                      Write-Host "============================================"
-                      Write-Host "BORE TUNNEL ACTIVE"
-                      Write-Host "============================================"
-                      Write-Host "Server: bore.pub"
-                      Write-Host "Port: $borePort"
-                      Write-Host "Username: rdpuser"
-                      Write-Host "Password: RDP@2024Secure!"
-                      Write-Host "============================================"
-                      Write-Host "Connect with: mstsc /v:bore.pub:$borePort"
-                      
-                      echo "BORE_PORT=$borePort" >> $env:GITHUB_ENV
-                  }
-              }
-          }
-
-      - name: Download and Start Avica
-        run: |
-          Write-Host "Downloading Avica..."
-          curl.exe -s -L -o AvicaLite.exe https://download.avica.com/AvicaLite_v8.0.8.9.exe
-          if (Test-Path "AvicaLite.exe") {
-              Write-Host "Starting Avica..."
-              Start-Process -FilePath ".\AvicaLite.exe" -ErrorAction SilentlyContinue
-          } else {
-              Write-Host "Warning: Avica download failed"
-          }
-
-      - name: Capture and Process OCR
-        id: ocr_engine
+      - name: Install Node.js & Localtunnel
         shell: powershell
-        continue-on-error: true
         run: |
-          Start-Sleep -s 25
-          $process = Get-Process -Name "AvicaLite" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($process) {
-              try {
-                  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-                  $Screen = [System.Windows.Forms.Screen]::PrimaryScreen
-                  $Bitmap = New-Object System.Drawing.Bitmap($Screen.Bounds.Width, $Screen.Bounds.Height)
-                  $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
-                  $Graphics.CopyFromScreen($Screen.Bounds.X, $Screen.Bounds.Y, 0, 0, $Bitmap.Size)
-                  $Bitmap.Save("$env:USERPROFILE\Desktop\pic.png", [System.Drawing.Imaging.ImageFormat]::Png)
-                  Write-Host "Screenshot captured"
-              } catch {
-                  Write-Host "Screenshot failed"
-              }
-          }
+          # طھط«ط¨ظٹطھ Node.js
+          $nodeUrl = "https://nodejs.org/dist/v20.11.0/node-v20.11.0-x64.msi"
+          $installerPath = "$env:TEMP\nodejs.msi"
+          Invoke-WebRequest -Uri $nodeUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           
-          try {
-              curl.exe -s -L -o screenshot.py https://gitlab.com/MR.English2008/avica/-/raw/main/OCR_Avica.py
-              $env:PYTHONWARNINGS="ignore"
-              cmd /c "python screenshot.py > nul 2>&1"
-          } catch {
-              Write-Host "OCR processing failed"
+          # طھط­ط¯ظٹط« PATH
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          
+          # طھط«ط¨ظٹطھ Localtunnel
+          & "C:\Program Files\nodejs\npm.cmd" install -g localtunnel
+
+      - name: Install RustDesk
+        shell: powershell
+        run: |
+          $rdUrl = "https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.msi"
+          $installerPath = "$env:TEMP\rustdesk.msi"
+          Invoke-WebRequest -Uri $rdUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          
+          & "C:\Program Files\RustDesk\rustdesk.exe" --password "MR.English2008"
+          
+          Start-Sleep -Seconds 5
+          & "C:\Program Files\RustDesk\rustdesk.exe" --get-id | Out-File -FilePath "$env:TEMP\id.txt"
+          $rdID = Get-Content "$env:TEMP\id.txt"
+          $rdID = $rdID.Trim()
+          "RUSTDESK_ID=$rdID" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Configure Firewall
+        shell: powershell
+        run: |
+          netsh advfirewall firewall add rule name="RustDesk-TCP" dir=in action=allow protocol=TCP localport=21115-21119
+          netsh advfirewall firewall add rule name="RustDesk-UDP" dir=in action=allow protocol=UDP localport=21116
+
+      - name: Start Localtunnel
+        shell: powershell
+        run: |
+          # طھط´ط؛ظٹظ„ Localtunnel ظپظٹ ط§ظ„ط®ظ„ظپظٹط©
+          $ltPath = "C:\Program Files\nodejs\node_modules\localtunnel\bin\lt.js"
+          Start-Process node -ArgumentList "`"$ltPath`"", "--port", "21116" -RedirectStandardOutput "$env:TEMP\lt.log" -NoNewWindow
+          
+          Start-Sleep -Seconds 10
+          
+          # ظ‚ط±ط§ط،ط© ط§ظ„ط±ط§ط¨ط· ظ…ظ† ط§ظ„ظ€ log
+          $ltLog = Get-Content "$env:TEMP\lt.log" -Raw
+          if ($ltLog -match "https://[a-z0-9\-]+\.loca\.lt") {
+              $publicUrl = $matches[0]
+              "LT_URL=$publicUrl" | Out-File -Append $env:GITHUB_ENV
           }
 
-      - name: Display Final Connection Info
+      - name: Runner Status & Keep Alive
+        shell: powershell
         run: |
+          $endTime = (Get-Date).AddHours(6)
+          Write-Host "Thanks to MR.English2008 for this perfect work"
+          Write-Host "follow for more: https://t.me/ME2008_RDP"
+          Write-Host "================================"
+          Write-Host "CONNECTION DETAILS:"
+          Write-Host "RustDesk ID: $env:RUSTDESK_ID"
+          Write-Host "Public URL: $env:LT_URL"
+          Write-Host "Password: MR.English2008"
+          Write-Host "================================"
           Write-Host ""
-          Write-Host "============================================"
-          Write-Host "     CONNECTION SUMMARY"
-          Write-Host "============================================"
-          Write-Host ""
-          
-          if ($env:TUNNEL_URL) {
-              Write-Host "LOCALHOST.RUN TUNNEL:"
-              Write-Host "URL: $env:TUNNEL_URL"
-              Write-Host "Host: $env:TUNNEL_HOST"
-              if ($env:TUNNEL_PORT) {
-                  Write-Host "Port: $env:TUNNEL_PORT"
-              }
-          }
-          
-          if ($env:BORE_PORT) {
-              Write-Host ""
-              Write-Host "BORE TUNNEL:"
-              Write-Host "Server: bore.pub"
-              Write-Host "Port: $env:BORE_PORT"
-              Write-Host "Command: mstsc /v:bore.pub:$env:BORE_PORT"
-          }
-          
-          Write-Host ""
-          Write-Host "RDP CREDENTIALS:"
-          Write-Host "Username: rdpuser"
-          Write-Host "Password: RDP@2024Secure!"
-          Write-Host ""
-          
-          Write-Host "AVICA ACCESS:"
-          if ("${{ steps.ocr_engine.outputs.id }}" -ne "") {
-              Write-Host "Avica ID  : ${{ steps.ocr_engine.outputs.id }}"
-              Write-Host "Avica Pass: ${{ steps.ocr_engine.outputs.pass }}"
-          } else {
-              Write-Host "Check Avica window for ID and Password"
-          }
-          
-          Write-Host ""
-          Write-Host "============================================"
-          Write-Host "Credits: MR.English2008"
-          Write-Host "Telegram: https://t.me/ME2008_RDP"
-          Write-Host "============================================"
+          Write-Host "Note: Localtunnel is 100% FREE - No registration required!"
+          Write-Host "Your tunnel will remain active for 6 hours"
 
-      - name: Keep Connection Alive
-        run: |
-          $startTime = Get-Date
-          $endTime = $startTime.AddHours(6)
-          $checkInterval = 180
-          
-          Write-Host "Starting 6-hour session..."
-          
           while ((Get-Date) -lt $endTime) {
-              $elapsed = ((Get-Date) - $startTime).ToString("hh\:mm\:ss")
-              $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
-              
-              Write-Host "Time - Elapsed: $elapsed | Remaining: $remaining"
-              
-              $sshProcess = Get-Process -Name "ssh" -ErrorAction SilentlyContinue
-              if ($sshProcess) {
-                  Write-Host "SSH tunnel: Active"
-              } else {
-                  Write-Host "SSH tunnel: Inactive"
-              }
-              
-              $boreProcess = Get-Process -Name "bore" -ErrorAction SilentlyContinue
-              if ($boreProcess) {
-                  Write-Host "Bore tunnel: Active"
-              } else {
-                  Write-Host "Bore tunnel: Inactive"
-              }
-              
-              $rdpService = Get-Service -Name "TermService" -ErrorAction SilentlyContinue
-              if ($rdpService.Status -eq "Running") {
-                  Write-Host "RDP service: Running"
-              }
-              
-              Start-Sleep -Seconds $checkInterval
+              Write-Host "Status: Online | ID: $env:RUSTDESK_ID | URL: $env:LT_URL | $(Get-Date)"
+              Start-Sleep -Seconds 60
           }
-          
-          Write-Host "Session completed"
