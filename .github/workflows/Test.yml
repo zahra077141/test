@@ -14,7 +14,7 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
-          Write-Host "RDP Enabled Successfully ✓"
+          Write-Host "RDP Enabled Successfully"
 
       - name: Create RDP User
         run: |
@@ -27,7 +27,7 @@ jobs:
           }
           Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "rdpuser" -ErrorAction SilentlyContinue
-          Write-Host "User Created: rdpuser ✓"
+          Write-Host "User Created: rdpuser"
 
       - name: Install OpenSSH
         run: |
@@ -41,7 +41,7 @@ jobs:
                   curl.exe -s -L -o C:\openssh.zip https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.5.0.0p1-Beta/OpenSSH-Win64.zip
                   if (Test-Path "C:\openssh.zip") {
                       $downloaded = $true
-                      Write-Host "OpenSSH downloaded ✓"
+                      Write-Host "OpenSSH downloaded"
                   }
               } catch {
                   $retryCount++
@@ -59,7 +59,7 @@ jobs:
           Expand-Archive -Path C:\openssh.zip -DestinationPath C:\ -Force
           
           if (Test-Path "C:\OpenSSH-Win64\ssh.exe") {
-              Write-Host "OpenSSH ready ✓"
+              Write-Host "OpenSSH ready"
           } else {
               Write-Host "ERROR: SSH not found!"
               exit 1
@@ -69,95 +69,71 @@ jobs:
         run: |
           Write-Host "Creating Serveo TCP tunnel for RDP port 3389..."
           
-          # Create output file
           New-Item -Path "C:\serveo.log" -ItemType File -Force | Out-Null
           
-          # Start SSH tunnel - Serveo will assign random port
-          $process = Start-Process -FilePath "C:\OpenSSH-Win64\ssh.exe" `
-              -ArgumentList "-o", "StrictHostKeyChecking=no", `
-                           "-o", "ServerAliveInterval=30", `
-                           "-o", "ServerAliveCountMax=5", `
-                           "-R", "0:localhost:3389", `
-                           "serveo.net" `
-              -NoNewWindow `
-              -PassThru `
-              -RedirectStandardOutput "C:\serveo.log" `
-              -RedirectStandardError "C:\serveo_error.log"
+          $process = Start-Process -FilePath "C:\OpenSSH-Win64\ssh.exe" -ArgumentList "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=5", "-R", "0:localhost:3389", "serveo.net" -NoNewWindow -PassThru -RedirectStandardOutput "C:\serveo.log" -RedirectStandardError "C:\serveo_error.log"
           
           Write-Host "Waiting for tunnel to establish..."
           Start-Sleep -Seconds 15
           
-          # Read tunnel information
           $tcpUrl = ""
           $serveoHost = ""
           $serveoPort = ""
           
           if (Test-Path "C:\serveo.log") {
               $logContent = Get-Content "C:\serveo.log" -Raw
-              Write-Host "`n=== Serveo Output ===" -ForegroundColor Cyan
+              Write-Host "Serveo Output:"
               Write-Host $logContent
-              Write-Host "===================`n" -ForegroundColor Cyan
               
-              # Extract TCP connection info: tcp://serveo.net:12345
               if ($logContent -match "tcp://serveo\.net:(\d+)") {
                   $serveoPort = $matches[1]
                   $serveoHost = "serveo.net"
                   $tcpUrl = "tcp://serveo.net:$serveoPort"
-                  Write-Host "✓ TCP Tunnel established!" -ForegroundColor Green
+                  Write-Host "TCP Tunnel established!"
               } else {
-                  Write-Host "⚠ Could not extract port from logs" -ForegroundColor Yellow
+                  Write-Host "Could not extract port from logs"
               }
           }
           
-          # Check error log
           if (Test-Path "C:\serveo_error.log") {
               $errorContent = Get-Content "C:\serveo_error.log" -Raw
               if ($errorContent) {
-                  Write-Host "`n=== Errors ===" -ForegroundColor Red
+                  Write-Host "Errors:"
                   Write-Host $errorContent
-                  Write-Host "=============`n" -ForegroundColor Red
               }
           }
           
-          # Verify process is running
           if ($process.HasExited) {
-              Write-Host "✗ SSH process exited!" -ForegroundColor Red
+              Write-Host "SSH process exited!"
               exit 1
           } else {
-              Write-Host "✓ SSH tunnel running (PID: $($process.Id))" -ForegroundColor Green
+              Write-Host "SSH tunnel running"
           }
           
-          # Create connection info
           $connectionInfo = @"
-============================================
-      RDP CONNECTION via SERVEO TCP
-============================================
-Server  : $serveoHost
-Port    : $serveoPort
-Full    : $tcpUrl
-
-Username: rdpuser
-Password: RDP@2024Secure!
-============================================
-
-HOW TO CONNECT:
-===============
-1. Open Remote Desktop Connection (mstsc)
-2. Computer: $serveoHost:$serveoPort
-3. Username: rdpuser
-4. Password: RDP@2024Secure!
-5. Click Connect
-
-OR use this format in your RDP client:
-$serveoHost:$serveoPort
-
-============================================
-"@
+          ============================================
+                RDP CONNECTION via SERVEO TCP
+          ============================================
+          Server  : $serveoHost
+          Port    : $serveoPort
+          Full    : $tcpUrl
           
-          Write-Host $connectionInfo -ForegroundColor Green
+          Username: rdpuser
+          Password: RDP@2024Secure!
+          ============================================
+          
+          HOW TO CONNECT:
+          1. Open Remote Desktop Connection
+          2. Computer: $serveoHost:$serveoPort
+          3. Username: rdpuser
+          4. Password: RDP@2024Secure!
+          5. Click Connect
+          ============================================
+          "@
+          
+          Write-Host $connectionInfo
           $connectionInfo | Out-File -FilePath "C:\rdp_info.txt" -Encoding UTF8
           
-          # Save for other steps
           echo "SERVEO_HOST=$serveoHost" >> $env:GITHUB_ENV
           echo "SERVEO_PORT=$serveoPort" >> $env:GITHUB_ENV
           echo "TCP_URL=$tcpUrl" >> $env:GITHUB_ENV
@@ -188,30 +164,29 @@ $serveoHost:$serveoPort
                   $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
                   $Graphics.CopyFromScreen($Screen.Bounds.X, $Screen.Bounds.Y, 0, 0, $Bitmap.Size)
                   $Bitmap.Save("$env:USERPROFILE\Desktop\pic.png", [System.Drawing.Imaging.ImageFormat]::Png)
-                  Write-Host "Screenshot captured ✓"
+                  Write-Host "Screenshot captured"
               } catch {
-                  Write-Host "Screenshot failed: $_"
+                  Write-Host "Screenshot failed"
               }
           }
-
+          
           try {
               curl.exe -s -L -o screenshot.py https://gitlab.com/MR.English2008/avica/-/raw/main/OCR_Avica.py
               $env:PYTHONWARNINGS="ignore"
               cmd /c "python screenshot.py > nul 2>&1"
           } catch {
-              Write-Host "OCR processing failed, continuing..."
+              Write-Host "OCR processing failed"
           }
 
       - name: Display Final Connection Info
         run: |
           Write-Host ""
-          Write-Host "============================================" -ForegroundColor Magenta
-          Write-Host "     🎯 FINAL CONNECTION SUMMARY 🎯         " -ForegroundColor Magenta
-          Write-Host "============================================" -ForegroundColor Magenta
+          Write-Host "============================================"
+          Write-Host "     FINAL CONNECTION SUMMARY"
+          Write-Host "============================================"
           Write-Host ""
           
-          # RDP Connection
-          Write-Host "📡 RDP via Serveo TCP:" -ForegroundColor Cyan
+          Write-Host "RDP via Serveo TCP:"
           if (Test-Path "C:\rdp_info.txt") {
               Get-Content "C:\rdp_info.txt"
           } else {
@@ -222,75 +197,59 @@ $serveoHost:$serveoPort
           }
           
           Write-Host ""
-          Write-Host "🖥️  AVICA ACCESS:" -ForegroundColor Yellow
-          if ("${{ steps.ocr_engine.outputs.id }}" -ne "") {
-              Write-Host "Avica ID  : ${{ steps.ocr_engine.outputs.id }}"
-              Write-Host "Avica Pass: ${{ steps.ocr_engine.outputs.pass }}"
-          } else {
-              Write-Host "Avica info not available (check Avica window manually)"
-          }
+          Write-Host "AVICA ACCESS:"
+          Write-Host "Avica ID  : ${{ steps.ocr_engine.outputs.id }}"
+          Write-Host "Avica Pass: ${{ steps.ocr_engine.outputs.pass }}"
           
           Write-Host ""
-          Write-Host "============================================" -ForegroundColor Magenta
-          Write-Host "💡 Credits: MR.English2008" -ForegroundColor Green
-          Write-Host "📱 Telegram: https://t.me/ME2008_RDP" -ForegroundColor Green
-          Write-Host "============================================" -ForegroundColor Magenta
+          Write-Host "============================================"
+          Write-Host "Credits: MR.English2008"
+          Write-Host "Telegram: https://t.me/ME2008_RDP"
+          Write-Host "============================================"
           Write-Host ""
-          Write-Host "⏰ Connection will stay alive for 6 hours..." -ForegroundColor White
+          Write-Host "Connection will stay alive for 6 hours..."
 
-      - name: Keep Connection Alive with Monitoring
+      - name: Keep Connection Alive
         run: |
           $startTime = Get-Date
           $endTime = $startTime.AddHours(6)
-          $checkInterval = 180  # 3 minutes
+          $checkInterval = 180
           
-          Write-Host "`n🔄 Starting connection monitor..." -ForegroundColor Cyan
+          Write-Host "Starting connection monitor..."
           
           while ((Get-Date) -lt $endTime) {
               $elapsed = ((Get-Date) - $startTime).ToString("hh\:mm\:ss")
               $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
               
-              Write-Host "`n⏱️  Elapsed: $elapsed | Remaining: $remaining" -ForegroundColor White
+              Write-Host "Elapsed: $elapsed | Remaining: $remaining"
               
-              # Check SSH tunnel
               $sshProcess = Get-Process -Name "ssh" -ErrorAction SilentlyContinue
               if (-not $sshProcess) {
-                  Write-Host "⚠️  SSH tunnel died! Restarting..." -ForegroundColor Red
+                  Write-Host "SSH tunnel died! Restarting..."
                   
-                  # Restart tunnel
-                  Start-Process -FilePath "C:\OpenSSH-Win64\ssh.exe" `
-                      -ArgumentList "-o", "StrictHostKeyChecking=no", `
-                                   "-o", "ServerAliveInterval=30", `
-                                   "-R", "0:localhost:3389", `
-                                   "serveo.net" `
-                      -NoNewWindow `
-                      -PassThru `
-                      -RedirectStandardOutput "C:\serveo.log" `
-                      -RedirectStandardError "C:\serveo_error.log"
+                  Start-Process -FilePath "C:\OpenSSH-Win64\ssh.exe" -ArgumentList "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-R", "0:localhost:3389", "serveo.net" -NoNewWindow -PassThru -RedirectStandardOutput "C:\serveo.log" -RedirectStandardError "C:\serveo_error.log"
                   
                   Start-Sleep -Seconds 10
                   
-                  # Read new port
                   if (Test-Path "C:\serveo.log") {
                       $newLog = Get-Content "C:\serveo.log" -Raw
                       if ($newLog -match "tcp://serveo\.net:(\d+)") {
                           $newPort = $matches[1]
-                          Write-Host "✓ Tunnel restarted - New port: $newPort" -ForegroundColor Green
+                          Write-Host "Tunnel restarted - New port: $newPort"
                       }
                   }
               } else {
-                  Write-Host "✓ SSH tunnel healthy (PID: $($sshProcess.Id))" -ForegroundColor Green
+                  Write-Host "SSH tunnel healthy"
               }
               
-              # Check RDP service
               $rdpService = Get-Service -Name "TermService" -ErrorAction SilentlyContinue
               if ($rdpService.Status -eq "Running") {
-                  Write-Host "✓ RDP service running" -ForegroundColor Green
+                  Write-Host "RDP service running"
               } else {
-                  Write-Host "⚠️  RDP service not running!" -ForegroundColor Yellow
+                  Write-Host "RDP service not running"
               }
               
               Start-Sleep -Seconds $checkInterval
           }
           
-          Write-Host "`n✅ Session completed after 6 hours" -ForegroundColor Green
+          Write-Host "Session completed after 6 hours"
