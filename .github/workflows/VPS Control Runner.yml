@@ -1,0 +1,45 @@
+name: VPS Control 
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # تم ضبطه لـ 6 ساعات
+    
+    steps:
+      # 1. سحب المستودع المحدد
+      - name: Checkout external repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'zahra077141/data'
+
+      # 2. إعداد لغة بايثون
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 3. تثبيت المكتبات من ملف requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      # 4. تشغيل السكربت app.py في الخلفية
+      - name: Start Application
+        run: |
+          # تشغيل السكربت وتوجيه المخرجات لملف لوج لعدم إعاقة العملية
+          nohup python3 app.py > app_log.txt 2>&1 &
+          sleep 5 # الانتظار قليلاً للتأكد من بدء التشغيل
+
+      # 5. فتح النفق (Tunnel) وإبقاء الجلسة تعمل
+      - name: Establish Tunnel & Keep Alive
+        run: |
+          echo ">>> Starting Serveo Tunnel..."
+          # ملاحظة: تأكد من أن تطبيقك يعمل على منفذ 8080، أو قم بتغييره هنا
+          ssh -o StrictHostKeyChecking=no -R my-unique-app:80:localhost:8080 serveo.net &
+          
+          echo ">>> Server is running. Keeping session alive for 6 hours..."
+          # إبقاء الوورك فلو يعمل لمدة 21000 ثانية (حوالي 5.8 ساعة)
+          sleep 21000
