@@ -1,50 +1,61 @@
-name: RustDesk + Win10 (Pinggy)
+name: RDP + Win10 (Pinggy)
 
 on:
   workflow_dispatch:
 
 jobs:
-  run-rustdesk:
-    runs-on: windows-2022
+  run-rdp:
+    runs-on: windows-latest
     steps:
-      - name: Install RustDesk
+      - name: Enable RDP & Set Password
         shell: powershell
         run: |
-          $rdUrl = "https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.msi"
-          $installerPath = "$env:TEMP\rustdesk.msi"
-          Invoke-WebRequest -Uri $rdUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          # تعيين كلمة المرور للمستخدم runneradmin
+          $password = "MR.English2008"
+          net user runneradmin $password
           
-          Start-Sleep -Seconds 3
-          & "C:\Program Files\RustDesk\rustdesk.exe" --password "MR.English2008"
+          # تفعيل RDP في النظام
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0
           
-          Start-Sleep -Seconds 5
-          & "C:\Program Files\RustDesk\rustdesk.exe" --get-id | Out-File -FilePath "$env:TEMP\id.txt"
-          $rdID = Get-Content "$env:TEMP\id.txt"
-          $rdID = $rdID.Trim()
-          "RUSTDESK_ID=$rdID" | Out-File -Append $env:GITHUB_ENV
+          # فتح المنفذ في الجدار الناري
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -value 1
 
-      - name: Configure Firewall
+      - name: Start Pinggy Tunnel (RDP)
         shell: powershell
         run: |
-          netsh advfirewall firewall add rule name="RustDesk-TCP" dir=in action=allow protocol=TCP localport=21115-21119
-          netsh advfirewall firewall add rule name="RustDesk-UDP" dir=in action=allow protocol=UDP localport=21116
-
-      - name: Start Pinggy TCP Tunnel
-        shell: powershell
-        run: |
-          # تشغيل Pinggy tunnel في الخلفية
-          $pinggyProcess = Start-Process ssh -ArgumentList "-p", "443", "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-R", "0:localhost:21116", "tcp@a.pinggy.io" -PassThru -NoNewWindow -RedirectStandardOutput "$env:TEMP\pinggy.log" -RedirectStandardError "$env:TEMP\pinggy_err.log"
+          # تشغيل Pinggy في الخلفية وتوجيه المخرجات لملف نصي
+          # نستخدم المنفذ 3389 وهو الخاص بـ RDP
+          Start-Job -ScriptBlock {
+              cmd /c "ssh -o StrictHostKeyChecking=no -p 443 -R0:localhost:3389 tcp@a.pinggy.io > $env:TEMP\pinggy.log 2>&1"
+          }
           
-          Start-Sleep -Seconds 15
+          Write-Host "Waiting for Pinggy to generate URL..."
+          $timeout = 0
+          $found = $false
           
-          # قراءة الرابط من الـ log
-          $pinggyLog = Get-Content "$env:TEMP\pinggy.log" -Raw -ErrorAction SilentlyContinue
-          if ($pinggyLog -match "tcp://([a-z0-9\-]+\.a\.pinggy\.io):(\d+)") {
-              $publicUrl = $matches[1]
-              $publicPort = $matches[2]
-              "PINGGY_URL=$publicUrl" | Out-File -Append $env:GITHUB_ENV
-              "PINGGY_PORT=$publicPort" | Out-File -Append $env:GITHUB_ENV
+          # محاولة قراءة الملف لمدة 30 ثانية حتى يظهر الرابط
+          while ($timeout -lt 30) {
+              Start-Sleep -Seconds 2
+              if (Test-Path "$env:TEMP\pinggy.log") {
+                  $logContent = Get-Content "$env:TEMP\pinggy.log" -Raw
+                  # البحث عن أي رابط بصيغة tcp://...
+                  if ($logContent -match "tcp://([^:]+):(\d+)") {
+                      $publicUrl = $matches[1]
+                      $publicPort = $matches[2]
+                      
+                      "PINGGY_URL=$publicUrl" | Out-File -Append $env:GITHUB_ENV
+                      "PINGGY_PORT=$publicPort" | Out-File -Append $env:GITHUB_ENV
+                      $found = $true
+                      break
+                  }
+              }
+              $timeout++
+          }
+          
+          if (-not $found) {
+              Write-Error "Failed to get Pinggy URL. Check the log."
+              Get-Content "$env:TEMP\pinggy.log"
           }
 
       - name: Runner Status & Keep Alive
@@ -56,11 +67,12 @@ jobs:
           Write-Host "Telegram: https://t.me/ME2008_RDP"
           Write-Host "========================================="
           Write-Host ""
-          Write-Host "CONNECTION DETAILS:"
-          Write-Host "RustDesk ID: $env:RUSTDESK_ID"
-          Write-Host "Pinggy URL: $env:PINGGY_URL"
-          Write-Host "Pinggy Port: $env:PINGGY_PORT"
+          Write-Host "CONNECTION DETAILS (USE RDP APP):"
+          Write-Host "User: runneradmin"
           Write-Host "Password: MR.English2008"
+          Write-Host ""
+          Write-Host "Host: $env:PINGGY_URL:$env:PINGGY_PORT"
+          Write-Host "(Copy the Host above and put it in Remote Desktop Connection)"
           Write-Host ""
           Write-Host "========================================="
           Write-Host "Pinggy is 100% FREE - No registration!"
@@ -69,6 +81,6 @@ jobs:
           Write-Host ""
 
           while ((Get-Date) -lt $endTime) {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Status: Online | ID: $env:RUSTDESK_ID | URL: $env:PINGGY_URL:$env:PINGGY_PORT"
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Status: Online | Connect to: $env:PINGGY_URL:$env:PINGGY_PORT"
               Start-Sleep -Seconds 60
           }
