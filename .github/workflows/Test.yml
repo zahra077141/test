@@ -1,4 +1,4 @@
-name: Avica RDP via Serveo TCP
+name: Avica RDP via SSH Tunnel
 
 on:
   workflow_dispatch:
@@ -65,80 +65,97 @@ jobs:
               exit 1
           }
 
-      - name: Create Serveo TCP Tunnel for RDP
+      - name: Download Bore Tunnel Client
         run: |
-          Write-Host "Creating Serveo TCP tunnel for RDP port 3389..."
+          Write-Host "Downloading Bore tunnel client..."
+          try {
+              curl.exe -s -L -o C:\bore.exe https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.exe
+              if (Test-Path "C:\bore.exe") {
+                  Write-Host "Bore downloaded successfully"
+              }
+          } catch {
+              Write-Host "Failed to download Bore"
+          }
+
+      - name: Create Localhost.run Tunnel
+        run: |
+          Write-Host "Creating localhost.run tunnel for RDP..."
           
-          New-Item -Path "C:\serveo.log" -ItemType File -Force | Out-Null
+          New-Item -Path "C:\tunnel.log" -ItemType File -Force | Out-Null
           
-          $process = Start-Process -FilePath "C:\OpenSSH-Win64\ssh.exe" -ArgumentList "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=5", "-R", "0:localhost:3389", "serveo.net" -NoNewWindow -PassThru -RedirectStandardOutput "C:\serveo.log" -RedirectStandardError "C:\serveo_error.log"
+          $sshProcess = Start-Process -FilePath "C:\OpenSSH-Win64\ssh.exe" -ArgumentList "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-o", "ExitOnForwardFailure=yes", "-R", "80:localhost:3389", "nokey@localhost.run" -NoNewWindow -PassThru -RedirectStandardOutput "C:\tunnel.log" -RedirectStandardError "C:\tunnel_error.log"
           
-          Write-Host "Waiting for tunnel to establish..."
+          Write-Host "Waiting for localhost.run tunnel..."
           Start-Sleep -Seconds 15
           
-          $tcpUrl = ""
-          $serveoHost = ""
-          $serveoPort = ""
+          $tunnelUrl = ""
+          $tunnelHost = ""
+          $tunnelPort = ""
           
-          if (Test-Path "C:\serveo.log") {
-              $logContent = Get-Content "C:\serveo.log" -Raw
-              Write-Host "Serveo Output:"
+          if (Test-Path "C:\tunnel.log") {
+              $logContent = Get-Content "C:\tunnel.log" -Raw
+              Write-Host "Tunnel Output:"
               Write-Host $logContent
               
-              if ($logContent -match "tcp://serveo\.net:(\d+)") {
-                  $serveoPort = $matches[1]
-                  $serveoHost = "serveo.net"
-                  $tcpUrl = "tcp://serveo.net:$serveoPort"
-                  Write-Host "TCP Tunnel established!"
-              } else {
-                  Write-Host "Could not extract port from logs"
+              if ($logContent -match "([a-z0-9\-]+\.lhr\.life):(\d+)") {
+                  $tunnelHost = $matches[1]
+                  $tunnelPort = $matches[2]
+                  $tunnelUrl = "${tunnelHost}:${tunnelPort}"
+                  Write-Host "Tunnel established successfully"
+              } elseif ($logContent -match "([a-z0-9\-]+\.localhost\.run)") {
+                  $tunnelHost = $matches[1]
+                  $tunnelUrl = $tunnelHost
+                  Write-Host "HTTP tunnel established"
               }
           }
           
-          if (Test-Path "C:\serveo_error.log") {
-              $errorContent = Get-Content "C:\serveo_error.log" -Raw
+          if (Test-Path "C:\tunnel_error.log") {
+              $errorContent = Get-Content "C:\tunnel_error.log" -Raw
               if ($errorContent) {
-                  Write-Host "Errors:"
+                  Write-Host "Tunnel messages:"
                   Write-Host $errorContent
               }
           }
           
-          if ($process.HasExited) {
-              Write-Host "SSH process exited!"
-              exit 1
+          if (-not $sshProcess.HasExited) {
+              Write-Host "SSH tunnel process running"
+              echo "TUNNEL_HOST=$tunnelHost" >> $env:GITHUB_ENV
+              echo "TUNNEL_PORT=$tunnelPort" >> $env:GITHUB_ENV
+              echo "TUNNEL_URL=$tunnelUrl" >> $env:GITHUB_ENV
           } else {
-              Write-Host "SSH tunnel running"
+              Write-Host "SSH process exited, trying Bore tunnel..."
           }
+
+      - name: Create Bore Tunnel as Backup
+        run: |
+          Write-Host "Starting Bore tunnel as backup..."
           
-          $rdpAddress = "${serveoHost}:${serveoPort}"
-          
-          $connectionInfo = @"
-          ============================================
-                RDP CONNECTION via SERVEO TCP
-          ============================================
-          Server  : $serveoHost
-          Port    : $serveoPort
-          Full    : $tcpUrl
-          
-          Username: rdpuser
-          Password: RDP@2024Secure!
-          ============================================
-          
-          HOW TO CONNECT:
-          1. Open Remote Desktop Connection
-          2. Computer: $rdpAddress
-          3. Username: rdpuser
-          4. Password: RDP@2024Secure!
-          5. Click Connect
-          ============================================
-          "@
-          
-          Write-Host $connectionInfo
-          $connectionInfo | Out-File -FilePath "C:\rdp_info.txt" -Encoding UTF8
-          
-          echo "SERVEO_HOST=$serveoHost" >> $env:GITHUB_ENV
-          echo "SERVEO_PORT=$serveoPort" >> $env:GITHUB_ENV
-          echo "TCP_URL=$tcpUrl" >> $env:GITHUB_ENV
+          if (Test-Path "C:\bore.exe") {
+              $boreProcess = Start-Process -FilePath "C:\bore.exe" -ArgumentList "local", "3389", "--to", "bore.pub" -NoNewWindow -PassThru -RedirectStandardOutput "C:\bore.log" -RedirectStandardError "C:\bore_error.log"
+              
+              Start-Sleep -Seconds 10
+              
+              if (Test-Path "C:\bore.log") {
+                  $boreLog = Get-Content "C:\bore.log" -Raw
+                  Write-Host "Bore Output:"
+                  Write-Host $boreLog
+                  
+                  if ($boreLog -match "listening at bore\.pub:(\d+)") {
+                      $borePort = $matches[1]
+                      Write-Host "============================================"
+                      Write-Host "BORE TUNNEL ACTIVE"
+                      Write-Host "============================================"
+                      Write-Host "Server: bore.pub"
+                      Write-Host "Port: $borePort"
+                      Write-Host "Username: rdpuser"
+                      Write-Host "Password: RDP@2024Secure!"
+                      Write-Host "============================================"
+                      Write-Host "Connect with: mstsc /v:bore.pub:$borePort"
+                      
+                      echo "BORE_PORT=$borePort" >> $env:GITHUB_ENV
+                  }
+              }
+          }
 
       - name: Download and Start Avica
         run: |
@@ -184,32 +201,46 @@ jobs:
         run: |
           Write-Host ""
           Write-Host "============================================"
-          Write-Host "     FINAL CONNECTION SUMMARY"
+          Write-Host "     CONNECTION SUMMARY"
           Write-Host "============================================"
           Write-Host ""
           
-          Write-Host "RDP via Serveo TCP:"
-          if (Test-Path "C:\rdp_info.txt") {
-              Get-Content "C:\rdp_info.txt"
-          } else {
-              Write-Host "Server: $env:SERVEO_HOST"
-              Write-Host "Port: $env:SERVEO_PORT"
-              Write-Host "Username: rdpuser"
-              Write-Host "Password: RDP@2024Secure!"
+          if ($env:TUNNEL_URL) {
+              Write-Host "LOCALHOST.RUN TUNNEL:"
+              Write-Host "URL: $env:TUNNEL_URL"
+              Write-Host "Host: $env:TUNNEL_HOST"
+              if ($env:TUNNEL_PORT) {
+                  Write-Host "Port: $env:TUNNEL_PORT"
+              }
+          }
+          
+          if ($env:BORE_PORT) {
+              Write-Host ""
+              Write-Host "BORE TUNNEL:"
+              Write-Host "Server: bore.pub"
+              Write-Host "Port: $env:BORE_PORT"
+              Write-Host "Command: mstsc /v:bore.pub:$env:BORE_PORT"
           }
           
           Write-Host ""
+          Write-Host "RDP CREDENTIALS:"
+          Write-Host "Username: rdpuser"
+          Write-Host "Password: RDP@2024Secure!"
+          Write-Host ""
+          
           Write-Host "AVICA ACCESS:"
-          Write-Host "Avica ID  : ${{ steps.ocr_engine.outputs.id }}"
-          Write-Host "Avica Pass: ${{ steps.ocr_engine.outputs.pass }}"
+          if ("${{ steps.ocr_engine.outputs.id }}" -ne "") {
+              Write-Host "Avica ID  : ${{ steps.ocr_engine.outputs.id }}"
+              Write-Host "Avica Pass: ${{ steps.ocr_engine.outputs.pass }}"
+          } else {
+              Write-Host "Check Avica window for ID and Password"
+          }
           
           Write-Host ""
           Write-Host "============================================"
           Write-Host "Credits: MR.English2008"
           Write-Host "Telegram: https://t.me/ME2008_RDP"
           Write-Host "============================================"
-          Write-Host ""
-          Write-Host "Connection will stay alive for 6 hours..."
 
       - name: Keep Connection Alive
         run: |
@@ -217,41 +248,34 @@ jobs:
           $endTime = $startTime.AddHours(6)
           $checkInterval = 180
           
-          Write-Host "Starting connection monitor..."
+          Write-Host "Starting 6-hour session..."
           
           while ((Get-Date) -lt $endTime) {
               $elapsed = ((Get-Date) - $startTime).ToString("hh\:mm\:ss")
               $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
               
-              Write-Host "Elapsed: $elapsed | Remaining: $remaining"
+              Write-Host "Time - Elapsed: $elapsed | Remaining: $remaining"
               
               $sshProcess = Get-Process -Name "ssh" -ErrorAction SilentlyContinue
-              if (-not $sshProcess) {
-                  Write-Host "SSH tunnel died! Restarting..."
-                  
-                  Start-Process -FilePath "C:\OpenSSH-Win64\ssh.exe" -ArgumentList "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30", "-R", "0:localhost:3389", "serveo.net" -NoNewWindow -PassThru -RedirectStandardOutput "C:\serveo.log" -RedirectStandardError "C:\serveo_error.log"
-                  
-                  Start-Sleep -Seconds 10
-                  
-                  if (Test-Path "C:\serveo.log") {
-                      $newLog = Get-Content "C:\serveo.log" -Raw
-                      if ($newLog -match "tcp://serveo\.net:(\d+)") {
-                          $newPort = $matches[1]
-                          Write-Host "Tunnel restarted - New port: $newPort"
-                      }
-                  }
+              if ($sshProcess) {
+                  Write-Host "SSH tunnel: Active"
               } else {
-                  Write-Host "SSH tunnel healthy"
+                  Write-Host "SSH tunnel: Inactive"
+              }
+              
+              $boreProcess = Get-Process -Name "bore" -ErrorAction SilentlyContinue
+              if ($boreProcess) {
+                  Write-Host "Bore tunnel: Active"
+              } else {
+                  Write-Host "Bore tunnel: Inactive"
               }
               
               $rdpService = Get-Service -Name "TermService" -ErrorAction SilentlyContinue
               if ($rdpService.Status -eq "Running") {
-                  Write-Host "RDP service running"
-              } else {
-                  Write-Host "RDP service not running"
+                  Write-Host "RDP service: Running"
               }
               
               Start-Sleep -Seconds $checkInterval
           }
           
-          Write-Host "Session completed after 6 hours"
+          Write-Host "Session completed"
