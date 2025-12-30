@@ -1,0 +1,78 @@
+name: Avica & RDP via Serveo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-ocr:
+    runs-on: windows-2022
+
+    steps:
+      - name: Configure RDP and User
+        run: |
+          # تعيين كلمة مرور للمستخدم الحالي (runneradmin)
+          net user runneradmin "RunnerPassword123!"
+          
+          # تفعيل الـ Remote Desktop في سجل النظام (Registry)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          
+          # السماح بمرور الـ RDP عبر جدار الحماية
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          # تعطيل المطالبة بـ NLA لتسهيل الاتصال من بعض التطبيقات
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+
+      - name: Start Serveo Tunnel
+        shell: powershell
+        run: |
+          Write-Host "Starting Serveo Tunnel..."
+          # تشغيل النفق في الخلفية. نستخدم منفذ 80 كاسم مستعار لطلب رابط، 
+          # لكن الأفضل لـ RDP استخدام منفذ عشوائي TCP.
+          # هذا الأمر سيحاول حجز اسم 'my-rdp-session' أو سيعطيك رابط عشوائي
+          Start-Process ssh -ArgumentList "-o StrictHostKeyChecking=no -R 80:localhost:3389 serveo.net"
+          
+          # الانتظار قليلاً للتأكد من الاتصال
+          Start-Sleep -Seconds 10
+          Write-Host "Check the logs below or the SSH output for your URL."
+
+      - name: Download and Start Avica
+        run: |
+          curl.exe -s -L -o AvicaLite.exe https://download.avica.com/AvicaLite_v8.0.8.9.exe
+          Start-Process -FilePath ".\AvicaLite.exe"
+
+      - name: Capture and Process OCR
+        id: ocr_engine
+        shell: powershell
+        run: |
+          Start-Sleep -s 25
+          $process = Get-Process -Name "AvicaLite" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($process) {
+              Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+              $Screen = [System.Windows.Forms.Screen]::PrimaryScreen
+              $Bitmap = New-Object System.Drawing.Bitmap($Screen.Bounds.Width, $Screen.Bounds.Height)
+              $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+              $Graphics.CopyFromScreen($Screen.Bounds.X, $Screen.Bounds.Y, 0, 0, $Bitmap.Size)
+              $Bitmap.Save("$env:USERPROFILE\Desktop\pic.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          }
+
+          # تحميل وتشغيل سكربت OCR الخاص بك
+          curl.exe -s -L -o screenshot.py https://gitlab.com/MR.English2008/avica/-/raw/main/OCR_Avica.py
+          $env:PYTHONWARNINGS="ignore"
+          # ملاحظة: تأكد من أن السكربت يطبع المخرجات بتنسيق GitHub Actions لتعمل الخطوة التالية
+          python screenshot.py
+
+      - name: Connection Details
+        run: |
+          Write-Host "=== RDP CONNECTION INFO ==="
+          Write-Host "Username: runneradmin"
+          Write-Host "Password: RunnerPassword123!"
+          Write-Host "Address: انظر إلى مخرجات خطوة Start Serveo Tunnel للحصول على الرابط"
+          Write-Host "==========================="
+          
+          Write-Host "`n=== AVICA ACCESS ==="
+          Write-Host "Avica ID:   ${{ steps.ocr_engine.outputs.id }}"
+          Write-Host "Avica Pass: ${{ steps.ocr_engine.outputs.pass }}"
+          Write-Host "==================`n"
+          
+          Write-Host "Runner is now keeping the connection alive for 6 hours..."
+          Start-Sleep -Seconds 21600
