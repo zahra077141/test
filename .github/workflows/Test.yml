@@ -1,94 +1,99 @@
-name: RDP + Win10 (Pinggy Fix)
-
+name: m85 C2 Panel Ultimate
 on:
   workflow_dispatch:
 
 jobs:
-  run-rdp:
-    runs-on: windows-latest
+  deploy-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355  # العمل لمدة 6 ساعات كحد أقصى
+    
     steps:
-      - name: Enable RDP & Set Password
-        shell: powershell
+      # 1. سحب ملفات المشروع الأصلي
+      - name: Checkout Project
+        uses: actions/checkout@v4
+        with:
+          repository: 'iamthebestm85/m85C2'
+
+      # 2. تجهيز لغة Go (لتشغيل السيرفر الرئيسي)
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      # 3. تجهيز لغة Node.js (لتشغيل الـ API)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 4. تجهيز لغة Python (لأدوات الصور)
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 5. تثبيت جميع المكتبات المطلوبة دفعة واحدة
+      - name: Install All Dependencies
         run: |
-          # تعيين كلمة المرور
-          $password = "MR.English2008"
-          net user runneradmin $password
+          echo ">>> Installing Python Requirements..."
+          pip install numpy Pillow
           
-          # تفعيل RDP
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -value 1
+          echo ">>> Installing Node.js Requirements..."
+          npm install express child_process
+          
+          echo ">>> Initializing Go Module..."
+          # التأكد من وجود ملف go.mod
+          if [ ! -f go.mod ]; then go mod init m85-c2; fi
+          go mod tidy
 
-      - name: Start Pinggy Tunnel
-        shell: powershell
+      # 6. تشغيل الخدمات (API و C2) في الخلفية
+      - name: Start C2 Services
         run: |
-          # حذف أي ملفات سجل سابقة
-          if (Test-Path "$env:TEMP\pinggy.log") { Remove-Item "$env:TEMP\pinggy.log" }
-
-          # تشغيل Pinggy باستخدام Start-Process مع تجاهل تام لأسئلة الأمان
-          # ملاحظة: نستخدم NUL لمنع حفظ بصمة السيرفر وبالتالي منع السؤال عنها
-          $sshArgs = @(
-              "-p", "443",
-              "-o", "StrictHostKeyChecking=no",
-              "-o", "UserKnownHostsFile=NUL",
-              "-o", "ServerAliveInterval=30",
-              "-R0:localhost:3389",
-              "tcp@a.pinggy.io"
-          )
-
-          Write-Host "Starting Pinggy Tunnel..."
-          $pinggyProc = Start-Process ssh -ArgumentList $sshArgs -PassThru -NoNewWindow -RedirectStandardOutput "$env:TEMP\pinggy.log" -RedirectStandardError "$env:TEMP\pinggy_err.log"
+          echo ">>> Starting API Server on Port 9998..."
+          nohup node api.js > api_log.txt 2>&1 &
           
-          # انتظار 10 ثواني للتأكد من الاتصال
-          Start-Sleep -Seconds 10
-
-          # محاولة استخراج الرابط
-          $logContent = Get-Content "$env:TEMP\pinggy.log" -Raw -ErrorAction SilentlyContinue
+          echo ">>> Starting C2 Telnet Server on Port 1111..."
+          nohup go run c2.go > c2_log.txt 2>&1 &
           
-          if ($logContent -match "tcp://([^:]+):(\d+)") {
-              $publicUrl = $matches[1]
-              $publicPort = $matches[2]
-              Write-Host "URL FOUND: $publicUrl:$publicPort"
-              "PINGGY_URL=$publicUrl" | Out-File -Append $env:GITHUB_ENV
-              "PINGGY_PORT=$publicPort" | Out-File -Append $env:GITHUB_ENV
-          } else {
-              Write-Error "Pinggy URL not found yet. Showing logs for debugging:"
-              Write-Host "=== STDOUT ==="
-              Get-Content "$env:TEMP\pinggy.log" -ErrorAction SilentlyContinue
-              Write-Host "=== STDERR ==="
-              Get-Content "$env:TEMP\pinggy_err.log" -ErrorAction SilentlyContinue
-          }
+          # الانتظار 5 ثواني للتأكد من أن السيرفرات اشتغلت
+          sleep 5
+          
+          # التحقق السريع من أن العمليات تعمل
+          if pgrep -f "go run c2.go" > /dev/null; then
+            echo ">>> C2 Server is RUNNING successfully."
+          else
+            echo ">>> WARNING: C2 Server might have failed. Check logs."
+            cat c2_log.txt
+          fi
 
-      - name: Runner Status & Keep Alive
-        shell: powershell
+      # 7. فتح النفق (Tunnel) وعرض معلومات الاتصال
+      - name: Create Tunnel & Show Login Info
         run: |
-          $endTime = (Get-Date).AddHours(6)
+          echo ">>> Requesting a raw TCP tunnel from Serveo..."
           
-          # طباعة المعلومات فقط إذا تم العثور على الرابط
-          if ($env:PINGGY_URL) {
-            Write-Host "========================================="
-            Write-Host "   RDP CONNECTION SUCCESSFUL"
-            Write-Host "========================================="
-            Write-Host "PC Name/Host: $env:PINGGY_URL:$env:PINGGY_PORT"
-            Write-Host "User:         runneradmin"
-            Write-Host "Password:     MR.English2008"
-            Write-Host "========================================="
-          } else {
-            Write-Warning "Connection failed. Check logs above."
-          }
+          # نطلب منفذ عشوائي (0) للاتصال بـ localhost:1111
+          ssh -o StrictHostKeyChecking=no -R 0:localhost:1111 serveo.net > connection_info.txt 2>&1 &
+          
+          # انتظار 10 ثواني حتى يعطينا Serveo الرابط والمنفذ
+          sleep 10
+          
+          echo "=========================================================="
+          echo "       ✅  S E R V E R   R E A D Y  ✅"
+          echo "=========================================================="
+          echo "👇 انسخ الأمر التالي وضعه في Termux للاتصال 👇"
+          echo ""
+          # استخراج وعرض أمر الاتصال الجاهز
+          grep -o "Forwarding TCP from serveo.net:[0-9]*" connection_info.txt | awk -F: '{print "telnet serveo.net " $2}'
+          echo ""
+          echo "=========================================================="
+          echo "🔑 Username: root"
+          echo "🔑 Password: root"
+          echo "=========================================================="
+          
+          # عرض السجل في حال فشل الاستخراج
+          echo "DEBUG INFO (If link is missing above):"
+          cat connection_info.txt
 
-          while ((Get-Date) -lt $endTime) {
-              if ($env:PINGGY_URL) {
-                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ONLINE | Host: $env:PINGGY_URL:$env:PINGGY_PORT"
-              } else {
-                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] WAITING/RETRYING..."
-                 # محاولة قراءة الرابط مرة أخرى في حال تأخر
-                 $log = Get-Content "$env:TEMP\pinggy.log" -Raw -ErrorAction SilentlyContinue
-                 if ($log -match "tcp://([^:]+):(\d+)") {
-                    $env:PINGGY_URL = $matches[1]
-                    $env:PINGGY_PORT = $matches[2]
-                 }
-              }
-              Start-Sleep -Seconds 60
-          }
+          # إبقاء الجلسة تعمل
+          sleep 21500
 
