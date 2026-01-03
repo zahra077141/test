@@ -1,62 +1,70 @@
-name: Setup XFCE Runner + Tailscale
+name: Windows RDP (Tailscale Only)
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
+concurrency:
+  group: github-rdp-singleton
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  # --- بيانات الدخول للـ RDP ---
+  RDP_USER: Bullettemporary
+  RDP_PASS: Bullet@12345
+  
+  # --- مفاتيح Tailscale (مثبتة كما طلبت) ---
+  TS_AUTHKEY: "tskey-auth-kCaD5987Zy11CNTRL-VgT8DTEgk1Vnuvmz8Jig1VKv89mms735"
+  # المفتاح أدناه موجود في المتغيرات لمن يحتاجه، لكن الاتصال يعتمد على الـ AuthKey أعلاه
+  TS_API_KEY: "tskey-api-kuUgA1492V11CNTRL-iw9XrCfJBhEPRfPX7eAGhEPExxVG8JKg"
 
 jobs:
-  setup-gui-runner:
-    runs-on: ubuntu-latest
-    env:
-      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
-      USERNAME: runner
-      PASSWORD: runner
-      TAILSCALE_HOSTNAME: gh-xfce-${{ github.run_id }}
-
+  rdp-session:
+    runs-on: windows-2022
+    timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Ensure runner user has sudo
+      - name: 🔐 Enable RDP Access
         run: |
-          echo "${USERNAME}:${PASSWORD}" | sudo chpasswd
-          echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/${USERNAME}
+          $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
+          $sec = ConvertTo-SecureString $p -AsPlainText -Force
+          # إنشاء المستخدم أو تحديثه
+          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name $u -Password $sec -AccountNeverExpires
+            Add-LocalGroupMember -Group Administrators -Member $u
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u
+          } else {
+            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
+            Enable-LocalUser -Name $u
+          }
+          # فتح المنفذ في الجدار الناري
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
+          Write-Host "RDP User '$u' prepared."
 
-      - name: Install XFCE + xrdp
+      - name: 🔌 Install & Connect Tailscale
         run: |
-          echo ">>> Installing lightweight XFCE Desktop..."
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xfce4 xfce4-goodies xorg dbus-x11 xrdp
+          Write-Host "Installing Tailscale..."
+          choco install tailscale -y --no-progress
+          
+          Write-Host "Connecting to Tailscale..."
+          # استخدام مفتاح المصادقة لربط الجهاز
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ env.TS_AUTHKEY }}" --hostname "github-rdp-bullet" --accept-routes
+          
+          Write-Host "Tailscale is up! You can now connect via Tailscale IP."
 
-          # set up xfce user
-          echo "startxfce4" | sudo tee /home/${USERNAME}/.xsession
-          sudo chown ${USERNAME}:${USERNAME} /home/${USERNAME}/.xsession
-
-          # make xrdb use xfce
-          echo "exec startxfce4" | sudo tee /etc/skel/.xsession
-          echo "startxfce4" | sudo tee /etc/skel/.xinitrc
-
-          sudo systemctl enable --now xrdp
-          sudo systemctl restart xrdp
-
-      - name: Install Tailscale
+      - name: ⏳ Keep Alive (355 Minutes)
         run: |
-          echo ">>> Installing Tailscale..."
-          curl -fsSL https://tailscale.com/install.sh | sudo sh
-          sudo tailscale up --authkey "${TAILSCALE_AUTHKEY}" --hostname "${TAILSCALE_HOSTNAME}"
-          sudo tailscale ip -4
+          $runtime = 355
+          $end = (Get-Date).AddMinutes($runtime)
+          Write-Host "Session active for $runtime minutes..."
+          
+          while((Get-Date) -lt $end){
+            $left = [int]([math]::Ceiling(($end - (Get-Date)).TotalMinutes))
+            Write-Host "Alive... ($left minutes remaining)"
+            Start-Sleep -Seconds 60
+          }
+          Write-Host "Time limit reached. Shutting down."
 
-      - name: Connection Info + Keep Alive
-        run: |
-          echo "=== FINAL CONNECTION INFO ==="
-          echo "USERNAME: ${USERNAME}"
-          echo "PASSWORD: ${PASSWORD}"
-          echo "Tailscale IPs:"
-          sudo tailscale ip -4 || true
-          echo
-          echo ">>> Connect with any RDP client using the IP above (port 3389)."
-          echo ">>> Keeping runner alive..."
-          while true; do
-            sleep 600
-          done
