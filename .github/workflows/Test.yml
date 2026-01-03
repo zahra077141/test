@@ -1,82 +1,63 @@
-name: m85 C2 Panel (Fixed)
+name: RustDesk + Win10
+
 on:
   workflow_dispatch:
 
 jobs:
-  deploy-and-run:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    
+  run-rustdesk:
+    runs-on: windows-2022
     steps:
-      # 1. سحب ملفات المشروع
-      - name: Checkout Project
-        uses: actions/checkout@v4
-        with:
-          repository: 'iamthebestm85/m85C2'
-
-      # 2. تجهيز البيئات (Go, Node, Python)
-      - name: Setup Environment
+      - name: Install & Connect Tailscale
+        shell: powershell
         run: |
-          sudo apt-get update
-          sudo apt-get install -y golang-go nodejs npm python3 python3-pip wget
-          
-          # تثبيت مكتبات بايثون
-          pip3 install numpy Pillow
-          
-          # تثبيت مكتبات Node
-          npm install express child_process
-          
-          # تجهيز Go
-          if [ ! -f go.mod ]; then go mod init m85-c2; fi
-          go mod tidy
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.92.3-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --hostname=gh-runner-${{ github.run_id }}
+          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          "TAILSCALE_IP=$tsIP" | Out-File -Append $env:GITHUB_ENV
 
-      # 3. تحميل أداة Bore (البديل القوي لـ Serveo)
-      - name: Install Bore Tunnel
+      - name: Install RustDesk
+        shell: powershell
         run: |
-          echo ">>> Downloading Bore..."
-          wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
-          tar -xf bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
-          chmod +x bore
-          sudo mv bore /usr/local/bin/
+          $rdUrl = "https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.msi"
+          $installerPath = "$env:TEMP\rustdesk.msi"
+          Invoke-WebRequest -Uri $rdUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          
+          & "C:\Program Files\RustDesk\rustdesk.exe" --password "MR.English2008"
+          
+          Start-Sleep -Seconds 5
+          & "C:\Program Files\RustDesk\rustdesk.exe" --get-id | Out-File -FilePath "$env:TEMP\id.txt"
+          $rdID = Get-Content "$env:TEMP\id.txt"
+          $rdID = $rdID.Trim()
+          "RUSTDESK_ID=$rdID" | Out-File -Append $env:GITHUB_ENV
 
-      # 4. تشغيل الخدمات
-      - name: Start Services
+      - name: Configure Firewall
+        shell: powershell
         run: |
-          echo ">>> Starting API..."
-          nohup node api.js > api_log.txt 2>&1 &
-          
-          echo ">>> Starting C2 Server..."
-          nohup go run c2.go > c2_log.txt 2>&1 &
-          sleep 5
+          netsh advfirewall firewall add rule name="RustDesk-TCP" dir=in action=allow protocol=TCP localport=21115-21119
+          netsh advfirewall firewall add rule name="RustDesk-UDP" dir=in action=allow protocol=UDP localport=21116
 
-      # 5. فتح النفق وعرض الرابط
-      - name: Create Tunnel & Show Info
+      - name: Runner Status & Keep Alive
+        shell: powershell
         run: |
-          echo ">>> Creating TCP Tunnel via Bore..."
-          # تشغيل النفق وتوجيه المنفذ 1111
-          nohup bore local 1111 --to bore.pub > tunnel_log.txt 2>&1 &
+          $endTime = (Get-Date).AddHours(6)
+          Write-Host "Thanks to MR.English2008 for this perfect work"
+          Write-Host "follow for more in my telegram channel"
+          Write-Host "https://t.me/ME2008_RDP"
+          Write-Host "..................................."
           
-          sleep 5
-          
-          echo "=========================================================="
-          echo "       ✅  S E R V E R   R E A D Y  ✅"
-          echo "=========================================================="
-          echo "👇 انسخ الأمر التالي وضعه في Termux للاتصال 👇"
-          echo ""
-          # استخراج الرابط والمنفذ تلقائياً
-          PORT=$(grep -o "listening at bore.pub:[0-9]*" tunnel_log.txt | awk -F: '{print $2}')
-          if [ -z "$PORT" ]; then
-            echo "❌ فشل الحصول على الرابط، الرجاء المحاولة مرة أخرى."
-            cat tunnel_log.txt
-          else
-            echo "telnet bore.pub $PORT"
-          fi
-          echo ""
-          echo "=========================================================="
-          echo "🔑 Username: root"
-          echo "🔑 Password: root"
-          echo "=========================================================="
-          
-          # إبقاء الجلسة تعمل
-          sleep 21500
+          Write-Host "================================"
+          Write-Host "CONNECTION DETAILS:"
+          Write-Host "RustDesk ID: $env:RUSTDESK_ID"
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          Write-Host "Password: MR.English2008"
+          Write-Host "================================"
+
+          while ((Get-Date) -lt $endTime) {
+              Write-Host "Status: Online | ID: $env:RUSTDESK_ID | IP: $env:TAILSCALE_IP | $(Get-Date)"
+              Start-Sleep -Seconds 60
+          }
 
