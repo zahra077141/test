@@ -1,63 +1,62 @@
-name: RustDesk + Win10
+name: Setup XFCE Runner + Tailscale
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  run-rustdesk:
-    runs-on: windows-2022
+  setup-gui-runner:
+    runs-on: ubuntu-latest
+    env:
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+      USERNAME: runner
+      PASSWORD: runner
+      TAILSCALE_HOSTNAME: gh-xfce-${{ github.run_id }}
+
     steps:
-      - name: Install & Connect Tailscale
-        shell: powershell
+      - uses: actions/checkout@v4
+
+      - name: Ensure runner user has sudo
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.92.3-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --hostname=gh-runner-${{ github.run_id }}
-          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          "TAILSCALE_IP=$tsIP" | Out-File -Append $env:GITHUB_ENV
+          echo "${USERNAME}:${PASSWORD}" | sudo chpasswd
+          echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/${USERNAME}
 
-      - name: Install RustDesk
-        shell: powershell
+      - name: Install XFCE + xrdp
         run: |
-          $rdUrl = "https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.msi"
-          $installerPath = "$env:TEMP\rustdesk.msi"
-          Invoke-WebRequest -Uri $rdUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          
-          & "C:\Program Files\RustDesk\rustdesk.exe" --password "MR.English2008"
-          
-          Start-Sleep -Seconds 5
-          & "C:\Program Files\RustDesk\rustdesk.exe" --get-id | Out-File -FilePath "$env:TEMP\id.txt"
-          $rdID = Get-Content "$env:TEMP\id.txt"
-          $rdID = $rdID.Trim()
-          "RUSTDESK_ID=$rdID" | Out-File -Append $env:GITHUB_ENV
+          echo ">>> Installing lightweight XFCE Desktop..."
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xfce4 xfce4-goodies xorg dbus-x11 xrdp
 
-      - name: Configure Firewall
-        shell: powershell
+          # set up xfce user
+          echo "startxfce4" | sudo tee /home/${USERNAME}/.xsession
+          sudo chown ${USERNAME}:${USERNAME} /home/${USERNAME}/.xsession
+
+          # make xrdb use xfce
+          echo "exec startxfce4" | sudo tee /etc/skel/.xsession
+          echo "startxfce4" | sudo tee /etc/skel/.xinitrc
+
+          sudo systemctl enable --now xrdp
+          sudo systemctl restart xrdp
+
+      - name: Install Tailscale
         run: |
-          netsh advfirewall firewall add rule name="RustDesk-TCP" dir=in action=allow protocol=TCP localport=21115-21119
-          netsh advfirewall firewall add rule name="RustDesk-UDP" dir=in action=allow protocol=UDP localport=21116
+          echo ">>> Installing Tailscale..."
+          curl -fsSL https://tailscale.com/install.sh | sudo sh
+          sudo tailscale up --authkey "${TAILSCALE_AUTHKEY}" --hostname "${TAILSCALE_HOSTNAME}"
+          sudo tailscale ip -4
 
-      - name: Runner Status & Keep Alive
-        shell: powershell
+      - name: Connection Info + Keep Alive
         run: |
-          $endTime = (Get-Date).AddHours(6)
-          Write-Host "Thanks to MR.English2008 for this perfect work"
-          Write-Host "follow for more in my telegram channel"
-          Write-Host "https://t.me/ME2008_RDP"
-          Write-Host "..................................."
-          
-          Write-Host "================================"
-          Write-Host "CONNECTION DETAILS:"
-          Write-Host "RustDesk ID: $env:RUSTDESK_ID"
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          Write-Host "Password: MR.English2008"
-          Write-Host "================================"
-
-          while ((Get-Date) -lt $endTime) {
-              Write-Host "Status: Online | ID: $env:RUSTDESK_ID | IP: $env:TAILSCALE_IP | $(Get-Date)"
-              Start-Sleep -Seconds 60
-          }
-
+          echo "=== FINAL CONNECTION INFO ==="
+          echo "USERNAME: ${USERNAME}"
+          echo "PASSWORD: ${PASSWORD}"
+          echo "Tailscale IPs:"
+          sudo tailscale ip -4 || true
+          echo
+          echo ">>> Connect with any RDP client using the IP above (port 3389)."
+          echo ">>> Keeping runner alive..."
+          while true; do
+            sleep 600
+          done
