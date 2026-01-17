@@ -1,0 +1,75 @@
+name: Windows RDP (Manual Tailscale Login)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: github-rdp-singleton
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  # --- بيانات الدخول للـ RDP ---
+  RDP_USER: no8lo
+  RDP_PASS: no8lo@12345
+
+jobs:
+  rdp-session:
+    runs-on: windows-2022
+    timeout-minutes: 370
+    steps:
+      - name: 🔐 Enable RDP Access
+        run: |
+          $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
+          $sec = ConvertTo-SecureString $p -AsPlainText -Force
+          # إعداد المستخدم والصلاحيات
+          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name $u -Password $sec -AccountNeverExpires
+            Add-LocalGroupMember -Group Administrators -Member $u
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u
+          } else {
+            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
+            Enable-LocalUser -Name $u
+          }
+          # فتح الجدار الناري
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
+          Write-Host "RDP User '$u' is ready."
+
+      - name: ⬇️ Install Tailscale
+        run: |
+          Write-Host "Installing Tailscale..."
+          choco install tailscale -y --no-progress
+
+      - name: 🔗 Generate Auth Link & Wait
+        # هذه الخطوة ستنتظر حتى تقوم أنت بفتح الرابط
+        timeout-minutes: 15 # لديك 15 دقيقة لفتح الرابط قبل أن يفشل الجوب
+        run: |
+          Write-Host "=========================================================="
+          Write-Host "⚠️ ACTION REQUIRED: CHECK THE LOGS BELOW ⚠️"
+          Write-Host "1. Look for a URL starting with https://login.tailscale.com/..."
+          Write-Host "2. Copy and paste it into your browser to authenticate."
+          Write-Host "3. Once approved, this workflow will automatically continue."
+          Write-Host "=========================================================="
+          
+          # الأمر هنا سيتوقف وينتظر المصادقة
+          & "C:\Program Files\Tailscale\tailscale.exe" up --hostname "github-rdp-manual"
+          
+          Write-Host "✅ Successfully connected to Tailscale!"
+
+      - name: ⏳ Keep Alive (355 Minutes)
+        run: |
+          $runtime = 355
+          $end = (Get-Date).AddMinutes($runtime)
+          Write-Host "RDP is now accessible via Tailscale IP."
+          Write-Host "Session active for $runtime minutes..."
+          
+          while((Get-Date) -lt $end){
+            $left = [int]([math]::Ceiling(($end - (Get-Date)).TotalMinutes))
+            Write-Host "Alive... ($left minutes remaining)"
+            Start-Sleep -Seconds 60
+          }
+          Write-Host "Time limit reached. Shutting down."
