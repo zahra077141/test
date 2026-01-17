@@ -14,7 +14,7 @@ defaults:
 env:
   # --- بيانات الدخول للـ RDP ---
   RDP_USER: no8lo
-  RDP_PASS: no8lo@12345
+  RDP_PASS: my@12345
 
 jobs:
   rdp-session:
