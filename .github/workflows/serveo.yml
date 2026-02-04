@@ -1,0 +1,66 @@
+name: Windows RDP (via Serveo)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: github-rdp-singleton
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  # --- بيانات الدخول للـ RDP ---
+  RDP_USER: Bullettemporary
+  RDP_PASS: Bullet@12345
+
+jobs:
+  rdp-session:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - name: 🔐 Enable RDP Access
+        run: |
+          $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
+          $sec = ConvertTo-SecureString $p -AsPlainText -Force
+          # إنشاء المستخدم أو تحديثه
+          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name $u -Password $sec -AccountNeverExpires
+            Add-LocalGroupMember -Group Administrators -Member $u
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u
+          } else {
+            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
+            Enable-LocalUser -Name $u
+          }
+          # فتح المنفذ في الجدار الناري للنظام
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
+          Write-Host "RDP User '$u' prepared."
+
+      - name: 🌐 Connect to Serveo Tunnel
+        run: |
+          Write-Host "Starting Serveo Tunnel..."
+          # ملاحظة: استخدمنا البورت 0 ليقوم سيرفيو بإعطائك بورت عشوائي متاح
+          # لأن بورت 3389 غالباً ما يكون محجوزاً من مستخدمين آخرين على سيرفيو.
+          Start-Process ssh -ArgumentList "-o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R 0:localhost:3389 serveo.net" -NoNewWindow
+          
+          Write-Host "Waiting for tunnel to initialize..."
+          Start-Sleep -Seconds 10
+          Write-Host "Check the logs above or below for the assigned port from serveo.net"
+
+      - name: ⏳ Keep Alive (355 Minutes)
+        run: |
+          $runtime = 355
+          $end = (Get-Date).AddMinutes($runtime)
+          Write-Host "Session active for $runtime minutes..."
+          Write-Host "To Connect: Look for a line like 'Forwarding TCP from serveo.net:XXXXX' in the logs."
+          
+          while((Get-Date) -lt $end){
+            $left = [int]([math]::Ceiling(($end - (Get-Date)).TotalMinutes))
+            Write-Host "Alive... ($left minutes remaining)"
+            # محاولة طباعة أي معلومات من الـ SSH إذا أمكن (اختياري)
+            Start-Sleep -Seconds 60
+          }
+          Write-Host "Time limit reached. Shutting down."
