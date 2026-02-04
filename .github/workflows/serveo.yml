@@ -1,4 +1,4 @@
-name: Windows RDP (via Serveo)
+name: Windows RDP (via Serveo - Fixed)
 
 on:
   workflow_dispatch:
@@ -25,7 +25,6 @@ jobs:
         run: |
           $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
           $sec = ConvertTo-SecureString $p -AsPlainText -Force
-          # إنشاء المستخدم أو تحديثه
           if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name $u -Password $sec -AccountNeverExpires
             Add-LocalGroupMember -Group Administrators -Member $u
@@ -34,33 +33,42 @@ jobs:
             Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
             Enable-LocalUser -Name $u
           }
-          # فتح المنفذ في الجدار الناري للنظام
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
           Write-Host "RDP User '$u' prepared."
 
       - name: 🌐 Connect to Serveo Tunnel
         run: |
-          Write-Host "Starting Serveo Tunnel..."
-          # ملاحظة: استخدمنا البورت 0 ليقوم سيرفيو بإعطائك بورت عشوائي متاح
-          # لأن بورت 3389 غالباً ما يكون محجوزاً من مستخدمين آخرين على سيرفيو.
-          Start-Process ssh -ArgumentList "-o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R 0:localhost:3389 serveo.net" -NoNewWindow
+          Write-Host "Starting Serveo Tunnel on port 44888..."
+          # طلب بورت محدد (44888) لزيادة الاستقرار وتوجيه المخرجات لملف log
+          $ssh_cmd = "ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -T -R 44888:localhost:3389 serveo.net"
+          Start-Process powershell -ArgumentList "-Command $ssh_cmd > serveo.log 2>&1"
           
-          Write-Host "Waiting for tunnel to initialize..."
-          Start-Sleep -Seconds 10
-          Write-Host "Check the logs above or below for the assigned port from serveo.net"
+          Write-Host "Waiting for Serveo to assign a link..."
+          Start-Sleep -Seconds 20
+          
+          # عرض محتوى الملف لرؤية الرابط
+          if (Test-Path serveo.log) {
+            Write-Host "-------------------------------------"
+            Get-Content serveo.log
+            Write-Host "-------------------------------------"
+          } else {
+            Write-Host "Error: serveo.log not found. Attempting backup connection..."
+          }
 
-      - name: ⏳ Keep Alive (355 Minutes)
+      - name: ⏳ Keep Alive & Link Monitor
         run: |
           $runtime = 355
           $end = (Get-Date).AddMinutes($runtime)
           Write-Host "Session active for $runtime minutes..."
-          Write-Host "To Connect: Look for a line like 'Forwarding TCP from serveo.net:XXXXX' in the logs."
           
           while((Get-Date) -lt $end){
             $left = [int]([math]::Ceiling(($end - (Get-Date)).TotalMinutes))
-            Write-Host "Alive... ($left minutes remaining)"
-            # محاولة طباعة أي معلومات من الـ SSH إذا أمكن (اختياري)
+            # إعادة طباعة الرابط كل دقيقة للتأكد من بقائه في السجلات
+            if (Test-Path serveo.log) {
+               $content = Get-Content serveo.log | Select-Object -Last 5
+               Write-Host "Status: $content ($left minutes remaining)"
+            }
             Start-Sleep -Seconds 60
           }
           Write-Host "Time limit reached. Shutting down."
