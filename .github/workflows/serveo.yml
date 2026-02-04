@@ -1,74 +1,61 @@
-name: Windows RDP (Robust Connection)
+name: Windows RDP - Final Fix
 
 on:
   workflow_dispatch:
-
-concurrency:
-  group: github-rdp-singleton
-  cancel-in-progress: false
-
-defaults:
-  run:
-    shell: pwsh
-
-env:
-  RDP_USER: Bullettemporary
-  RDP_PASS: Bullet@12345
 
 jobs:
   rdp-session:
     runs-on: windows-2022
     timeout-minutes: 360
     steps:
-      - name: 🔐 Prepare RDP Environment
+      - name: 🔐 Setup RDP User
         run: |
-          $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
+          $u="Bullettemporary"; $p="Bullet@12345"
           $sec = ConvertTo-SecureString $p -AsPlainText -Force
-          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name $u -Password $sec -AccountNeverExpires
-            Add-LocalGroupMember -Group Administrators -Member $u
-            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u
-          } else {
-            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
-            Enable-LocalUser -Name $u
-          }
+          New-LocalUser -Name $u -Password $sec -AccountNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group Administrators -Member $u
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
-          Write-Host "User $u is ready for RDP."
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Write-Host "User Prepared."
 
-      - name: 🚀 Launch Multi-Service Tunnel
+      - name: 🚀 Open Port & Capture Link
+        shell: pwsh
         run: |
-          Write-Host "Initializing connection via Pinggy (More stable for RDP)..."
+          Write-Host "Starting Tunnel..."
+          # تشغيل النفق وتوجيه كل المخرجات لملف نصي فوراً
+          $process = Start-Process ssh -ArgumentList "-o StrictHostKeyChecking=no -o ServerAliveInterval=60 -p 443 -R 0:localhost:3389 a.pinggy.io" -RedirectStandardOutput "tunnel_output.log" -PassThru
           
-          # استخدام Pinggy كخيار أول لأنه يدعم التخصيص التلقائي للبورتات بذكاء
-          $pinggy_cmd = "ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -p 443 -R 0:localhost:3389 a.pinggy.io"
+          Write-Host "Searching for your RDP link..."
+          $found = $false
+          $attempts = 0
           
-          # تشغيل النفق في الخلفية وحفظ المخرجات
-          Start-Process powershell -ArgumentList "-Command $pinggy_cmd > tunnel.log 2>&1"
+          # حلقة تكرار لمدة دقيقة للبحث عن الرابط داخل ملف السجل
+          while (-not $found -and $attempts -lt 60) {
+              if (Test-Path "tunnel_output.log") {
+                  $content = Get-Content "tunnel_output.log" | Out-String
+                  if ($content -match "tcp://[a-z0-9.-]+:[0-9]+") {
+                      $link = [regex]::Match($content, "tcp://[a-z0-9.-]+:[0-9]+").Value
+                      Write-Host "****************************************************"
+                      Write-Host "SUCCESS! YOUR RDP ADDRESS IS:"
+                      Write-Host $link
+                      Write-Host "****************************************************"
+                      $found = $true
+                  }
+              }
+              Start-Sleep -Seconds 2
+              $attempts++
+          }
           
-          Write-Host "Waiting for the tunnel link to be generated..."
-          Start-Sleep -Seconds 25
-          
-          if (Test-Path tunnel.log) {
-            Write-Host "---------------- CONNECTION INFO ----------------"
-            Get-Content tunnel.log | Select-String "tcp://"
-            Write-Host "------------------------------------------------"
+          if (-not $found) { 
+            Write-Host "Failed to capture link. Printing raw log for debugging:"
+            Get-Content "tunnel_output.log" 
           }
 
-      - name: ⏳ Persistent Monitoring
+      - name: ⏳ Keep Connection Alive
         run: |
-          $end = (Get-Date).AddMinutes(355)
-          Write-Host "Session is live. Monitoring tunnel status..."
-          
-          while((Get-Date) -lt $end){
-            if (Test-Path tunnel.log) {
-               # استخراج الرابط من السجل وطباعته بوضوح
-               $link = Get-Content tunnel.log | Select-String "tcp://" | Select-Object -Last 1
-               if ($link) {
-                   Write-Host "Connect here -> $link"
-               } else {
-                   Write-Host "Waiting for link... (Check logs if it takes too long)"
-               }
-            }
-            Start-Sleep -Seconds 60
+          Write-Host "RDP is active. Connection will stay open for 6 hours."
+          for ($i=1; $i -le 350; $i++) {
+              Write-Host "Session Alive... ($($i) min)"
+              Start-Sleep -Seconds 60
           }
