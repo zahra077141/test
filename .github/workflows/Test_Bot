@@ -1,0 +1,81 @@
+name: Bots Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup-sshx-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355  # 5 hours
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      # --- 1. تثبيت مكاتب بايثون ---
+      - name: Install Python packages
+        run: |
+          echo ">>> Installing Python libraries..."
+          pip install requests user-agent pyTelegramBotAPI cloudscraper beautifulsoup4
+          echo "✓ Libraries installed successfully"
+
+      # --- 2. تحميل سكربتات بايثون ---
+      - name: Download Python Scripts
+        run: |
+          echo ">>> Downloading scripts..."
+          wget https://raw.githubusercontent.com/zahra077141/test/refs/heads/main/file1.py
+          wget https://raw.githubusercontent.com/zahra077141/test/refs/heads/main/file2.py
+          echo "✓ Scripts downloaded"
+
+      # --- 3. تشغيل السكربتات في الخلفية ---
+      - name: Run Scripts in Background
+        run: |
+          echo ">>> Starting Python scripts in background..."
+          # استخدام nohup و & لضمان عمل السكربتات في الخلفية وعدم إيقاف الوورك فلو
+          nohup python3 file1.py > script1.log 2>&1 &
+          nohup python3 file2.py > script2.log 2>&1 &
+          
+          echo "✓ Scripts are running in background"
+
+      # --- تثبيت أدوات إضافية (اختياري) ---
+      - name: Install additional tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl wget git vim nano htop
+          echo "✓ Additional tools installed"
+
+      # --- 4. تثبيت وتشغيل sshx.io ---
+      - name: Install and start sshx.io
+        run: |
+          echo ">>> Installing sshx.io..."
+          curl -sSf https://sshx.io/get | sh
+          
+          echo ">>> Starting sshx.io session..."
+          # تشغيل sshx في الخلفية وحفظ الرابط
+          sshx > sshx_output.txt 2>&1 &
+          
+          # الانتظار حتى يتم إنشاء الرابط
+          echo ">>> Waiting for sshx.io link..."
+          sleep 10
+          
+          # عرض معلومات الاتصال
+          echo ""
+          echo "=========================================="
+          echo "   sshx.io SESSION READY"
+          echo "=========================================="
+          cat sshx_output.txt
+          echo "=========================================="
+          echo ""
+          echo ">>> Python version: $(python3 --version)"
+          echo ">>> Active Python Processes:"
+          ps aux | grep python3
+          echo ""
+          echo "=========================================="
+          echo ">>> Session will stay alive for 5 hours..."
+          echo "=========================================="
+          
+          # إبقاء الجلسة نشطة
+          tail -f sshx_output.txt &
+          sleep 18000
