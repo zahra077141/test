@@ -3,86 +3,125 @@ import requests
 import json
 import time
 import os
-import datetime
 import random
 import threading
 
 # ضع توكن البوت الخاص بك هنا
-TOKEN = "7987425397:"
+TOKEN = "8343560003:AAHMy5vo5uZ9fIbEYWbpKidk5d4wRSKgJa0"
 
-# تفعيل تعدد المسارات لدعم مئات المستخدمين في نفس الوقت بدون تأخير
+# ضع الـ ID الخاص بك هنا (مهم جداً للوحة التحكم)
+ADMIN_ID = 7772935915 
+
 bot = telebot.TeleBot(TOKEN, num_threads=50)
 
-# الرابط الخاص بك
 ES_URL = "http://67.217.59.246:9200/matcher/_search"
 
 last_search_times = {}
-LIMITS_FILE = "random_limits.json"
-
-# قفل برمجي لحماية ملفات الجيسون من التلف عند ضغط المستخدمين
+PERMISSIONS_FILE = "permissions.json"
 file_lock = threading.Lock()
 
-def get_iraq_date():
-    return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).strftime('%Y-%m-%d')
-
-def check_random_limit(user_id):
-    current_date = get_iraq_date()
-
+def load_permissions():
+    """تحميل الصلاحيات من ملف الجيسون"""
     with file_lock:
-        if os.path.exists(LIMITS_FILE):
-            with open(LIMITS_FILE, "r", encoding="utf-8") as f:
-                try:
-                    data = json.load(f)
-                except json.JSONDecodeError:
-                    data = {"date": current_date, "users": {}}
+        if not os.path.exists(PERMISSIONS_FILE):
+            return {"allowed_users": [], "allowed_groups": []}
+        try:
+            with open(PERMISSIONS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return {"allowed_users": [], "allowed_groups": []}
 
-            if data.get("date") != current_date:
-                os.remove(LIMITS_FILE)
-                data = {"date": current_date, "users": {}}
-        else:
-            data = {"date": current_date, "users": {}}
-
-        user_str = str(user_id)
-        user_count = data["users"].get(user_str, 0)
-
-        if user_count >= 100:
-            return False
-
-        data["users"][user_str] = user_count + 1
-
-        with open(LIMITS_FILE, "w", encoding="utf-8") as f:
+def save_permissions(data):
+    """حفظ الصلاحيات في ملف الجيسون"""
+    with file_lock:
+        with open(PERMISSIONS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
 
-    return True
+def is_allowed(message):
+    """التحقق مما إذا كان المستخدم أو المجموعة لديهم صلاحية"""
+    if message.from_user.id == ADMIN_ID:
+        return True
+        
+    perms = load_permissions()
+    
+    if message.chat.type == 'private':
+        return message.from_user.id in perms.get("allowed_users", [])
+    else:
+        # إذا كان في مجموعة، يجب أن تكون المجموعة مسموحة
+        return message.chat.id in perms.get("allowed_groups", [])
 
-def log_search(user_id, name, search_type, query):
-    log_entry = {
-        "id": user_id,
-        "name": name,
-        "type": search_type,
-        "query": query
-    }
-    filename = "logs.json"
+# ================= لوحة تحكم الإدمن (مخفية للجميع عدا الإدمن) =================
+@bot.message_handler(commands=['adduser', 'deluser', 'addgroup', 'delgroup', 'list'])
+def admin_controls(message):
+    # تجاهل أي مستخدم عادي أو إذا كان الأمر في مجموعة
+    if message.from_user.id != ADMIN_ID or message.chat.type != 'private':
+        return
 
-    with file_lock:
+    command = message.text.split()[0]
+    args = message.text.split()[1:]
+    perms = load_permissions()
+
+    if command == '/adduser':
+        if not args:
+            return bot.reply_to(message, "<b>Usage:</b> <code>/adduser {User_ID}</code>", parse_mode="HTML")
         try:
-            if os.path.exists(filename):
-                with open(filename, "r", encoding="utf-8") as file:
-                    try:
-                        logs = json.load(file)
-                    except json.JSONDecodeError:
-                        logs = []
-            else:
-                logs = []
+            target_id = int(args[0])
+            if target_id not in perms['allowed_users']:
+                perms['allowed_users'].append(target_id)
+                save_permissions(perms)
+            bot.reply_to(message, f"<b>Success:</b> User <code>{target_id}</code> has been granted private search access.", parse_mode="HTML")
+        except ValueError:
+            bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
 
-            logs.append(log_entry)
-            with open(filename, "w", encoding="utf-8") as file:
-                json.dump(logs, file, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"Error logging: {e}")
+    elif command == '/deluser':
+        if not args:
+            return bot.reply_to(message, "<b>Usage:</b> <code>/deluser {User_ID}</code>", parse_mode="HTML")
+        try:
+            target_id = int(args[0])
+            if target_id in perms['allowed_users']:
+                perms['allowed_users'].remove(target_id)
+                save_permissions(perms)
+            bot.reply_to(message, f"<b>Success:</b> User <code>{target_id}</code> access revoked.", parse_mode="HTML")
+        except ValueError:
+            bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
 
+    elif command == '/addgroup':
+        if not args:
+            return bot.reply_to(message, "<b>Usage:</b> <code>/addgroup {Group_ID}</code>", parse_mode="HTML")
+        try:
+            target_id = int(args[0])
+            if target_id not in perms['allowed_groups']:
+                perms['allowed_groups'].append(target_id)
+                save_permissions(perms)
+            bot.reply_to(message, f"<b>Success:</b> Group <code>{target_id}</code> is now allowed.", parse_mode="HTML")
+        except ValueError:
+            bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
+
+    elif command == '/delgroup':
+        if not args:
+            return bot.reply_to(message, "<b>Usage:</b> <code>/delgroup {Group_ID}</code>", parse_mode="HTML")
+        try:
+            target_id = int(args[0])
+            if target_id in perms['allowed_groups']:
+                perms['allowed_groups'].remove(target_id)
+                save_permissions(perms)
+            bot.reply_to(message, f"<b>Success:</b> Group <code>{target_id}</code> access revoked.", parse_mode="HTML")
+        except ValueError:
+            bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
+
+    elif command == '/list':
+        users = "\n".join([f"<code>{uid}</code>" for uid in perms.get('allowed_users', [])]) or "None"
+        groups = "\n".join([f"<code>{gid}</code>" for gid in perms.get('allowed_groups', [])]) or "None"
+        bot.reply_to(message, f"<b>Allowed Users:</b>\n{users}\n\n<b>Allowed Groups:</b>\n{groups}", parse_mode="HTML")
+
+# ================= أوامر البوت الأساسية =================
 @bot.message_handler(commands=['start', 'help'])
 def send_instructions(message):
+    # التحقق من الصلاحيات أولاً
+    if not is_allowed(message):
+        bot.reply_to(message, "<b>Error:</b> You do not have permission to use the bot here.", parse_mode="HTML")
+        return
+
     instructions = (
         "<b>Welcome.</b>\n\n"
         "<b>We have 4,606,063,150 emails</b>\n\n"
@@ -91,14 +130,40 @@ def send_instructions(message):
         "<b>/pass {target}</b>\n"
         "<b>/random {count}</b>"
     )
+
+    # إضافة لوحة التحكم فقط إذا كان المستلم هو الإدمن وفي الخاص
+    if message.from_user.id == ADMIN_ID and message.chat.type == 'private':
+        perms = load_permissions()
+        u_count = len(perms.get('allowed_users', []))
+        g_count = len(perms.get('allowed_groups', []))
+        
+        admin_panel = (
+            "\n\n====================\n"
+            "<b>🛠 ADMIN PANEL 🛠</b>\n"
+            "====================\n"
+            f"Allowed Users: {u_count}\n"
+            f"Allowed Groups: {g_count}\n\n"
+            "<b>Admin Commands:</b>\n"
+            "<code>/adduser {ID}</code>\n"
+            "<code>/deluser {ID}</code>\n"
+            "<code>/addgroup {ID}</code>\n"
+            "<code>/delgroup {ID}</code>\n"
+            "<code>/list</code> - Show all IDs"
+        )
+        instructions += admin_panel
+
     bot.reply_to(message, instructions, parse_mode="HTML")
 
 @bot.message_handler(commands=['random'])
 def handle_random(message):
+    if not is_allowed(message):
+        bot.reply_to(message, "<b>Error:</b> You do not have permission to search here.", parse_mode="HTML")
+        return
+
     user_id = message.from_user.id
     current_time = time.time()
 
-    if user_id in last_search_times and (current_time - last_search_times[user_id]) < 3:
+    if user_id in last_search_times and (current_time - last_search_times[user_id]) < 1:
         return
     last_search_times[user_id] = current_time
 
@@ -114,12 +179,6 @@ def handle_random(message):
         return
     if count <= 0:
         return
-
-    if not check_random_limit(user_id):
-        bot.reply_to(message, "<b>Error:</b> Don't be gay, your daily limit is over, come back tomorrow", parse_mode="HTML")
-        return
-
-    log_search(user_id, message.from_user.first_name, "random", str(count))
 
     random_chars = "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=2))
     random_skip = random.randint(0, 9000)
@@ -137,9 +196,7 @@ def handle_random(message):
         response.raise_for_status()
         data = response.json()
     except Exception as e:
-        # طباعة الخطأ في التيرمنال للمدير فقط
         print(f"Backend Error [Random]: {e}")
-        # رسالة مبهمة وعامة للمستخدم
         bot.reply_to(message, "<b>Error:</b> Service is currently unavailable. Please try again later.", parse_mode="HTML")
         return
 
@@ -191,10 +248,14 @@ def handle_random(message):
 
 @bot.message_handler(commands=['email', 'pass'])
 def handle_search(message):
+    if not is_allowed(message):
+        bot.reply_to(message, "<b>Error:</b> You do not have permission to search here.", parse_mode="HTML")
+        return
+
     user_id = message.from_user.id
     current_time = time.time()
 
-    if user_id in last_search_times and (current_time - last_search_times[user_id]) < 3:
+    if user_id in last_search_times and (current_time - last_search_times[user_id]) < 1:
         return
 
     last_search_times[user_id] = current_time
@@ -212,13 +273,9 @@ def handle_search(message):
             bot.reply_to(message, "<b>Error:</b> Invalid email format. Must contain '@'.", parse_mode="HTML")
             return
         es_query = f'email:"{query_value}"'
-        search_type = "email"
 
     elif command == '/pass':
         es_query = f'password:"{query_value}"'
-        search_type = "password"
-
-    log_search(user_id, message.from_user.first_name, search_type, query_value)
 
     params = {
         'q': es_query,
@@ -232,9 +289,7 @@ def handle_search(message):
         response.raise_for_status()
         data = response.json()
     except Exception as e:
-        # طباعة الخطأ في التيرمنال للمدير فقط
         print(f"Backend Error [Search]: {e}")
-        # رسالة مبهمة وعامة للمستخدم
         bot.reply_to(message, "<b>Error:</b> Service is currently unavailable. Please try again later.", parse_mode="HTML")
         return
 
@@ -287,7 +342,6 @@ def handle_search(message):
     if total_results <= 10:
         bot.reply_to(message, telegram_header + formatted_message, parse_mode="HTML")
     else:
-        # إضافة طابع زمني للملف لمنع تداخل أسماء الملفات إذا بحث المستخدم مرتين بسرعة
         filename = f"search_{user_id}_{int(time.time())}.txt"
         with open(filename, "w", encoding="utf-8") as f:
             f.write(file_content)
