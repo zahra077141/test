@@ -1,5 +1,6 @@
-import telebot
-import requests
+from telebot.async_telebot import AsyncTeleBot
+import asyncio
+import aiohttp
 import json
 import time
 import os
@@ -12,7 +13,8 @@ TOKEN = "8343560003:AAHMy5vo5uZ9fIbEYWbpKidk5d4wRSKgJa0"
 # ضع الـ ID الخاص بك هنا (مهم جداً للوحة التحكم)
 ADMIN_ID = 7772935915 
 
-bot = telebot.TeleBot(TOKEN, num_threads=50)
+# تم إزالة num_threads لأن البوت أصبح Async ولا يحتاج مسارات متعددة
+bot = AsyncTeleBot(TOKEN)
 
 ES_URL = "http://67.217.59.246:9200/matcher/_search"
 
@@ -52,7 +54,7 @@ def is_allowed(message):
 
 # ================= لوحة تحكم الإدمن (مخفية للجميع عدا الإدمن) =================
 @bot.message_handler(commands=['adduser', 'deluser', 'addgroup', 'delgroup', 'list'])
-def admin_controls(message):
+async def admin_controls(message):
     # تجاهل أي مستخدم عادي أو إذا كان الأمر في مجموعة
     if message.from_user.id != ADMIN_ID or message.chat.type != 'private':
         return
@@ -63,63 +65,63 @@ def admin_controls(message):
 
     if command == '/adduser':
         if not args:
-            return bot.reply_to(message, "<b>Usage:</b> <code>/adduser {User_ID}</code>", parse_mode="HTML")
+            return await bot.reply_to(message, "<b>Usage:</b> <code>/adduser {User_ID}</code>", parse_mode="HTML")
         try:
             target_id = int(args[0])
             if target_id not in perms['allowed_users']:
                 perms['allowed_users'].append(target_id)
                 save_permissions(perms)
-            bot.reply_to(message, f"<b>Success:</b> User <code>{target_id}</code> has been granted private search access.", parse_mode="HTML")
+            await bot.reply_to(message, f"<b>Success:</b> User <code>{target_id}</code> has been granted private search access.", parse_mode="HTML")
         except ValueError:
-            bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
+            await bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
 
     elif command == '/deluser':
         if not args:
-            return bot.reply_to(message, "<b>Usage:</b> <code>/deluser {User_ID}</code>", parse_mode="HTML")
+            return await bot.reply_to(message, "<b>Usage:</b> <code>/deluser {User_ID}</code>", parse_mode="HTML")
         try:
             target_id = int(args[0])
             if target_id in perms['allowed_users']:
                 perms['allowed_users'].remove(target_id)
                 save_permissions(perms)
-            bot.reply_to(message, f"<b>Success:</b> User <code>{target_id}</code> access revoked.", parse_mode="HTML")
+            await bot.reply_to(message, f"<b>Success:</b> User <code>{target_id}</code> access revoked.", parse_mode="HTML")
         except ValueError:
-            bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
+            await bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
 
     elif command == '/addgroup':
         if not args:
-            return bot.reply_to(message, "<b>Usage:</b> <code>/addgroup {Group_ID}</code>", parse_mode="HTML")
+            return await bot.reply_to(message, "<b>Usage:</b> <code>/addgroup {Group_ID}</code>", parse_mode="HTML")
         try:
             target_id = int(args[0])
             if target_id not in perms['allowed_groups']:
                 perms['allowed_groups'].append(target_id)
                 save_permissions(perms)
-            bot.reply_to(message, f"<b>Success:</b> Group <code>{target_id}</code> is now allowed.", parse_mode="HTML")
+            await bot.reply_to(message, f"<b>Success:</b> Group <code>{target_id}</code> is now allowed.", parse_mode="HTML")
         except ValueError:
-            bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
+            await bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
 
     elif command == '/delgroup':
         if not args:
-            return bot.reply_to(message, "<b>Usage:</b> <code>/delgroup {Group_ID}</code>", parse_mode="HTML")
+            return await bot.reply_to(message, "<b>Usage:</b> <code>/delgroup {Group_ID}</code>", parse_mode="HTML")
         try:
             target_id = int(args[0])
             if target_id in perms['allowed_groups']:
                 perms['allowed_groups'].remove(target_id)
                 save_permissions(perms)
-            bot.reply_to(message, f"<b>Success:</b> Group <code>{target_id}</code> access revoked.", parse_mode="HTML")
+            await bot.reply_to(message, f"<b>Success:</b> Group <code>{target_id}</code> access revoked.", parse_mode="HTML")
         except ValueError:
-            bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
+            await bot.reply_to(message, "<b>Error:</b> Invalid ID format.", parse_mode="HTML")
 
     elif command == '/list':
         users = "\n".join([f"<code>{uid}</code>" for uid in perms.get('allowed_users', [])]) or "None"
         groups = "\n".join([f"<code>{gid}</code>" for gid in perms.get('allowed_groups', [])]) or "None"
-        bot.reply_to(message, f"<b>Allowed Users:</b>\n{users}\n\n<b>Allowed Groups:</b>\n{groups}", parse_mode="HTML")
+        await bot.reply_to(message, f"<b>Allowed Users:</b>\n{users}\n\n<b>Allowed Groups:</b>\n{groups}", parse_mode="HTML")
 
 # ================= أوامر البوت الأساسية =================
 @bot.message_handler(commands=['start', 'help'])
-def send_instructions(message):
+async def send_instructions(message):
     # التحقق من الصلاحيات أولاً
     if not is_allowed(message):
-        bot.reply_to(message, "<b>Error:</b> You do not have permission to use the bot here.", parse_mode="HTML")
+        await bot.reply_to(message, "<b>Error:</b> You do not have permission to use the bot here.", parse_mode="HTML")
         return
 
     instructions = (
@@ -152,12 +154,12 @@ def send_instructions(message):
         )
         instructions += admin_panel
 
-    bot.reply_to(message, instructions, parse_mode="HTML")
+    await bot.reply_to(message, instructions, parse_mode="HTML")
 
 @bot.message_handler(commands=['random'])
-def handle_random(message):
+async def handle_random(message):
     if not is_allowed(message):
-        bot.reply_to(message, "<b>Error:</b> You do not have permission to search here.", parse_mode="HTML")
+        await bot.reply_to(message, "<b>Error:</b> You do not have permission to search here.", parse_mode="HTML")
         return
 
     user_id = message.from_user.id
@@ -171,11 +173,11 @@ def handle_random(message):
         count_str = message.text.split(" ", 1)[1].strip()
         count = int(count_str)
     except (IndexError, ValueError):
-        bot.reply_to(message, "<b>Error:</b> Invalid count. Use /random {Number}.", parse_mode="HTML")
+        await bot.reply_to(message, "<b>Error:</b> Invalid count. Use /random {Number}.", parse_mode="HTML")
         return
 
     if count > 149:
-        bot.reply_to(message, "<b>Error:</b> Maximum allowed count is 149.", parse_mode="HTML")
+        await bot.reply_to(message, "<b>Error:</b> Maximum allowed count is 149.", parse_mode="HTML")
         return
     if count <= 0:
         return
@@ -192,12 +194,14 @@ def handle_random(message):
 
     start_time = time.time()
     try:
-        response = requests.get(ES_URL, params=params, timeout=15)
-        response.raise_for_status()
-        data = response.json()
+        # استخدام aiohttp لجعل الاتصال بقاعدة البيانات سريع ولا يوقف البوت
+        async with aiohttp.ClientSession() as session:
+            async with session.get(ES_URL, params=params, timeout=15) as response:
+                response.raise_for_status()
+                data = await response.json()
     except Exception as e:
         print(f"Backend Error [Random]: {e}")
-        bot.reply_to(message, "<b>Error:</b> Service is currently unavailable. Please try again later.", parse_mode="HTML")
+        await bot.reply_to(message, "<b>Error:</b> Service is currently unavailable. Please try again later.", parse_mode="HTML")
         return
 
     end_time = time.time()
@@ -214,7 +218,7 @@ def handle_random(message):
     )
 
     if total_results == 0:
-        bot.reply_to(message, telegram_header + "No results found.", parse_mode="HTML")
+        await bot.reply_to(message, telegram_header + "No results found.", parse_mode="HTML")
         return
 
     formatted_message = ""
@@ -229,14 +233,14 @@ def handle_random(message):
         file_content += f"Email: {email}\nPassword: {password}\n\n"
 
     if total_results <= 10:
-        bot.reply_to(message, telegram_header + formatted_message.strip(), parse_mode="HTML")
+        await bot.reply_to(message, telegram_header + formatted_message.strip(), parse_mode="HTML")
     else:
         filename = f"random_{user_id}_{int(time.time())}.txt"
         with open(filename, "w", encoding="utf-8") as f:
             f.write(file_content.strip())
 
         with open(filename, "rb") as f:
-            bot.send_document(
+            await bot.send_document(
                 message.chat.id, 
                 f, 
                 caption=telegram_header.strip(),
@@ -247,9 +251,9 @@ def handle_random(message):
         os.remove(filename)
 
 @bot.message_handler(commands=['email', 'pass'])
-def handle_search(message):
+async def handle_search(message):
     if not is_allowed(message):
-        bot.reply_to(message, "<b>Error:</b> You do not have permission to search here.", parse_mode="HTML")
+        await bot.reply_to(message, "<b>Error:</b> You do not have permission to search here.", parse_mode="HTML")
         return
 
     user_id = message.from_user.id
@@ -264,13 +268,13 @@ def handle_search(message):
     try:
         query_value = message.text.split(" ", 1)[1].strip()
     except IndexError:
-        bot.reply_to(message, "<b>Error:</b> Missing search parameter.", parse_mode="HTML")
+        await bot.reply_to(message, "<b>Error:</b> Missing search parameter.", parse_mode="HTML")
         return
 
     if command == '/email':
         query_value = query_value.lower()
         if '@' not in query_value:
-            bot.reply_to(message, "<b>Error:</b> Invalid email format. Must contain '@'.", parse_mode="HTML")
+            await bot.reply_to(message, "<b>Error:</b> Invalid email format. Must contain '@'.", parse_mode="HTML")
             return
         es_query = f'email:"{query_value}"'
 
@@ -285,12 +289,14 @@ def handle_search(message):
 
     start_time = time.time()
     try:
-        response = requests.get(ES_URL, params=params, timeout=15)
-        response.raise_for_status()
-        data = response.json()
+        # استخدام aiohttp لجعل الاتصال بقاعدة البيانات سريع ولا يوقف البوت
+        async with aiohttp.ClientSession() as session:
+            async with session.get(ES_URL, params=params, timeout=15) as response:
+                response.raise_for_status()
+                data = await response.json()
     except Exception as e:
         print(f"Backend Error [Search]: {e}")
-        bot.reply_to(message, "<b>Error:</b> Service is currently unavailable. Please try again later.", parse_mode="HTML")
+        await bot.reply_to(message, "<b>Error:</b> Service is currently unavailable. Please try again later.", parse_mode="HTML")
         return
 
     end_time = time.time()
@@ -307,7 +313,7 @@ def handle_search(message):
     )
 
     if total_results == 0:
-        bot.reply_to(message, telegram_header + "No results found.", parse_mode="HTML")
+        await bot.reply_to(message, telegram_header + "No results found.", parse_mode="HTML")
         return
 
     formatted_message = ""
@@ -340,14 +346,14 @@ def handle_search(message):
         file_content += "\n".join(emails)
 
     if total_results <= 10:
-        bot.reply_to(message, telegram_header + formatted_message, parse_mode="HTML")
+        await bot.reply_to(message, telegram_header + formatted_message, parse_mode="HTML")
     else:
         filename = f"search_{user_id}_{int(time.time())}.txt"
         with open(filename, "w", encoding="utf-8") as f:
             f.write(file_content)
 
         with open(filename, "rb") as f:
-            bot.send_document(
+            await bot.send_document(
                 message.chat.id, 
                 f, 
                 caption=telegram_header.strip(),
@@ -357,5 +363,5 @@ def handle_search(message):
 
         os.remove(filename)
 
-print("Bot is running securely and multi-threaded...")
-bot.infinity_polling()
+print("Bot is running securely and fast (Async mode)...")
+asyncio.run(bot.polling())
