@@ -8,7 +8,7 @@ import random
 import threading
 
 # ضع توكن البوت الخاص بك هنا
-TOKEN = "7987425397:AAESNge6diL0mXYLZ9LgRh5LIqgyutSGL60"
+TOKEN = "7987425397:"
 
 # تفعيل تعدد المسارات لدعم مئات المستخدمين في نفس الوقت بدون تأخير
 bot = telebot.TeleBot(TOKEN, num_threads=50)
