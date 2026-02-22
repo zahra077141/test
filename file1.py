@@ -8,10 +8,10 @@ import random
 import threading
 
 # ضع توكن البوت الخاص بك هنا
-TOKEN = "7987425397:AAESNge6diL0mXYLZ9LgRh5LIqgyutSGL60"
+TOKEN = "7987425397:"
 
 # ضع الـ ID الخاص بك هنا (مهم جداً للوحة التحكم)
-ADMIN_ID = 7772935915 
+ADMIN_ID = 77729359
 
 # تم إزالة num_threads لأن البوت أصبح Async ولا يحتاج مسارات متعددة
 bot = AsyncTeleBot(TOKEN)
